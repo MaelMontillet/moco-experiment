@@ -33,6 +33,7 @@ from torch.utils.tensorboard import SummaryWriter
 import moco.builder
 import moco.loader
 import moco.optimizer
+import moco.stain_augmentation
 
 import vits
 
@@ -267,7 +268,7 @@ def main_worker(gpu, ngpus_per_node, args):
         transforms.RandomGrayscale(p=0.2),
         transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=1.0),
         transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
+        #transforms.ToTensor(),
         normalize
     ]
 
@@ -280,23 +281,37 @@ def main_worker(gpu, ngpus_per_node, args):
         transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=0.1),
         transforms.RandomApply([moco.loader.Solarize()], p=0.2),
         transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
+        #transforms.ToTensor(),
         normalize
     ]
 
-    train_dataset = datasets.ImageFolder(
+
+    """train_dataset = datasets.ImageFolder(
         traindir,
         moco.loader.TwoCropsTransform(transforms.Compose(augmentation1), 
-                                      transforms.Compose(augmentation2)))
+                                      transforms.Compose(augmentation2)))"""
+    train_dataset = TileDataset(traindir)
+    
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
         train_sampler = None
 
-    train_loader = torch.utils.data.DataLoader(
+    """train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)"""
+
+    stain_augmentor = stain_augmentation.all_free_version(arg.gpu)
+
+    train_loader = DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
+        collate_fn = get_collate_function(transforms.Compose(augmentation1), 
+                                          transforms.Compose(augmentation2), 
+                                          stain_augmentor, arg_gpu=arg.gpu)
+    )
+    
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:

@@ -8,6 +8,10 @@ from PIL import Image, ImageFilter, ImageOps
 import math
 import random
 import torchvision.transforms.functional as tf
+from torchvision.transforms import v2
+from torch.utils.data import Dataset
+import os
+import torch
 
 
 class TwoCropsTransform:
@@ -40,3 +44,59 @@ class Solarize(object):
 
     def __call__(self, x):
         return ImageOps.solarize(x)
+
+
+
+
+class TileDataset(Dataset):
+    def __init__(self, root_dir):
+        self.root_dir = root_dir
+        self.tile_paths = []
+
+        for slide_dir in os.listdir(root_dir):
+            slide_path = os.path.join(root_dir, slide_dir)
+            if os.path.isdir(slide_path):
+                for tile_file in os.listdir(slide_path):
+                    if tile_file.endswith(('.png', '.jpg', '.jpeg')):
+                        self.tile_paths.append(os.path.join(slide_path, tile_file))
+
+    def __len__(self):
+        return len(self.tile_paths)
+
+    def __getitem__(self, idx):
+        tile_path = self.tile_paths[idx]
+        image = Image.open(tile_path).convert("RGB")
+        return image
+
+
+def get_collate_function(base_transform1, base_transform2, stain_augmentation, arg_gpu=None):
+
+    """
+    ImageFolder that was used in default MoCo v3 automatically assign a labels to images 
+    corresponding to the folder of the images. 
+    This label isn't use so we just return None in addition of data to have the correct 
+    output form but it is never used. 
+    """
+    def collate_fn(img_list): 
+        if arg_gpu is not None:
+            imgs = torch.stack(v2.ToTensor()(img_list)).cuda(arg_gpu)
+        else:
+            imgs = torch.stack(v2.ToTensor()(img_list)).cuda()
+        stained_batch1 = stain_augmentation(imgs)
+        stained_batch2 = stain_augmentation(imgs)
+ 
+        batch1 = []
+        batch2 = []
+
+        for i in range(len(img_list)):
+            first_crop = base_transform1(stained_batch1[i].cpu())
+            batch1.append(first_crop)
+            second_crop = base_transform1(stained_batch2[i].cpu())
+            batch2.append(second_crop)
+
+        batch1 = torch.stack(batch1)
+        batch2 = torch.stack(batch2)
+
+        return (batch1, batch2), None
+    
+    return collate_fn
