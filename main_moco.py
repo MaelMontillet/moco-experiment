@@ -37,6 +37,12 @@ import moco.stain_augmentation
 
 import vits
 
+import os
+import glob
+import subprocess
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from tqdm import tqdm
+
 
 torchvision_model_names = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -117,7 +123,7 @@ parser.add_argument('--warmup-epochs', default=10, type=int, metavar='N',
                     help='number of warmup epochs')
 parser.add_argument('--crop-min', default=0.08, type=float,
                     help='minimum scale for random cropping (default: 0.08)')
-
+parser.add_argument('--tar-dir', help="Directory from which we mount the tars")
 
 def main():
     args = parser.parse_args()
@@ -155,6 +161,38 @@ def main():
 
 
 def main_worker(gpu, ngpus_per_node, args):
+
+    print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
+    source_dir = args.tar_dir
+    target_base_dir = args.data
+
+    os.makedirs(target_base_dir, exist_ok=True)
+
+    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))
+
+    def mount_archive(archive_path):
+	    filename = os.path.basename(archive_path)
+	    tcga_id = filename.split('.')[0]
+	    target_path = os.path.join(target_base_dir, tcga_id)
+	
+	    if not os.path.is_dir(target_path):
+		    os.makedirs(target_path)
+		
+		    subprocess.run(
+			    ["ratarmount", "--recursive", archive_path, target_path], 
+			    stdout=subprocess.DEVNULL,
+			    check=True
+		    )
+
+
+    with ProcessPoolExecutor(max_workers=args.workers) as executor:
+        futures = {executor.submit(mount_archive, tar): tar for tar in tar_files}
+        for _ in tqdm(as_completed(futures), total=len(futures), desc="Mounting TARs"):
+            pass 
+
+    print(f"Dataset mounted.")
+
+
     args.gpu = gpu
 
     # suppress printing if not first GPU on each node
@@ -220,7 +258,7 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         # AllGather/rank implementation in this code only supports DistributedDataParallel.
         raise NotImplementedError("Only DistributedDataParallel is supported.")
-    print(model) # print model after SyncBatchNorm
+    #print(model) # print model after SyncBatchNorm
 
     if args.optimizer == 'lars':
         optimizer = moco.optimizer.LARS(model.parameters(), args.lr,
@@ -255,7 +293,7 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = os.path.join(args.data, 'train')
+    traindir = args.data
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -290,8 +328,8 @@ def main_worker(gpu, ngpus_per_node, args):
         traindir,
         moco.loader.TwoCropsTransform(transforms.Compose(augmentation1), 
                                       transforms.Compose(augmentation2)))"""
-    train_dataset = TileDataset(traindir)
-    
+    train_dataset = loader.TileDataset(traindir)
+    print(f"Created dataset of size {len(train_dataset)}")    
 
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -302,7 +340,7 @@ def main_worker(gpu, ngpus_per_node, args):
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)"""
 
-    stain_augmentor = stain_augmentation.all_free_version(arg.gpu)
+    stain_augmentor = stain_augmentation.all_free_version()
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),

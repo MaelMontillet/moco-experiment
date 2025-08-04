@@ -473,7 +473,6 @@ def hsv_to_rgb_torch(hsv):
 
     return rgb
 
-
 """
     Modified from Robin's version:
     The color picker is mine (using HSV for free stain)
@@ -481,57 +480,32 @@ def hsv_to_rgb_torch(hsv):
 class StainAugmentor(nn.Module):
     def __init__(
         self,
-        alpha_range: Union[float, Tuple[float, float]] = (0.5, 2),
-        beta_range: Union[float, Tuple[float, float]] = (-0.15, 0.15),
+        od_mins: (0.5, 0.2),
+        od_maxs: (2, 2),
         stain_matrix_mins: Tuple[float, float] = ((0, 0), (0.15, 0.2), (0.4, 0.6)),
         stain_matrix_maxs: Tuple[float, float] = ((1, 1), (0.6, 0.7), (0.8, 0.9)),
         p: float = 1, 
-        color_system="hsv", 
-        arg_gpu=None
+        color_system="hsv"
     ):
         super().__init__()
 
-        if isinstance(alpha_range, float):
-            alpha_range = (1 - alpha_range, 1 + alpha_range)
-        if isinstance(beta_range, float):
-            beta_range = (-beta_range, beta_range)
-
-        self.alpha_range = alpha_range
-        self.beta_range = beta_range
-        if arg_gpu is not None:
-            self.stain_matrix_mins = torch.tensor(stain_matrix_mins).cuda(arg_gpu)
-            self.stain_matrix_maxs = torch.tensor(stain_matrix_maxs).cuda(arg_gpu)
-        else:
-            self.stain_matrix_mins = torch.tensor(stain_matrix_mins).cuda()
-            self.stain_matrix_maxs = torch.tensor(stain_matrix_maxs).cuda()
+        self.od_mins =  od_mins
+        self.od_maxs =  od_maxs
+        self.stain_matrix_mins = stain_matrix_mins
+        self.stain_matrix_maxs = stain_matrix_maxs
         self.p = p
         self.color_system = color_system
 
-    def get_params(self, n, dtype=None, device=None):
-
-        stains = (self.stain_matrix_maxs - self.stain_matrix_mins) * torch.rand(n, 3, 2, dtype=dtype, device=device) + self.stain_matrix_mins
-        if self.color_system == "hsv":
-            # Put the color channel at the end
-            stain_perm = stains.permute(0, 2, 1)
-            # Convert to rgb and permute back
-            stains = hsv_to_rgb_torch(stain_perm).permute(0, 2, 1)
-        stains = 1 - stains
-        return {
-            "alpha": (self.alpha_range[1] - self.alpha_range[0])
-            * torch.rand(n, 2, dtype=dtype, device=device)
-            + self.alpha_range[0],
-            "beta": (self.beta_range[1] - self.beta_range[0])
-            * torch.rand(n, 2, dtype=dtype, device=device)
-            + self.beta_range[0],
-            "stain_matrix": stains,
-        }
-
     def forward(self, x):
         x *= 255
-        params = self.get_params(x.shape[0], dtype=x.dtype, device=x.device)
-        alpha = params["alpha"]
-        beta = params["beta"]
+        n = x.shape[0]
 
+        od_mins = torch.tensor(self.od_mins, dtype=x.dtype, device=x.device)
+        od_maxs = torch.tensor(self.od_maxs, dtype=x.dtype, device=x.device)
+        stain_matrix_mins = torch.tensor(self.stain_matrix_mins, dtype=x.dtype, device=x.device)
+        stain_matrix_maxs = torch.tensor(self.stain_matrix_maxs, dtype=x.dtype, device=x.device)
+
+        # Get the concentrations of the image
         absorbance = _image_to_absorbance_matrix(x, channel_axis=0)
         stain_matrix = stain_extraction_pca(
             absorbance, image_type="absorbance", channel_axis=0
@@ -540,9 +514,33 @@ class StainAugmentor(nn.Module):
         x /= 255
         if HE is None:
             return x
-        stain_matrix = params["stain_matrix"]
-        HE = torch.where(HE > 0.2, (HE * alpha[..., None] + beta[..., None]), HE)
+
+        # Normelize each channel by its max
+        # Get max vaues
+        max_vals = HE.max(axis=-1, keepdim = True).values
+        # Avoid deviding by zero
+        max_vals[max_vals==0] = 1
+        # Normalize
+        normalized = HE / max_vals
+
+        # Set the maxs to a random values in the autorized range
+        scalars = (od_maxs - od_mins) * torch.rand(n, 2, dtype=x.dtype, device=x.device) + od_mins
+        scalars = scalars.unsqueeze(-1)
+
+        HE = normalized * scalars
+        
+        # Randomly sort a stain matrix
+        stain_matrix = (stain_matrix_maxs - stain_matrix_mins) * torch.rand(n, 3, 2, dtype=x.dtype, device=x.device) + stain_matrix_mins
+        if self.color_system == "hsv":
+            # Put the color channel at the end
+            stain_perm = stain_matrix.permute(0, 2, 1)
+            # Convert to rgb and permute back
+            stain_matrix = hsv_to_rgb_torch(stain_perm).permute(0, 2, 1)
+        # Invert the stains (parameters are classical ranges which are inverted with real ranges)
+        stain_matrix = 1 - stain_matrix
+        
         out = _normalized_from_concentrations(HE, stain_matrix, 240, x.shape, 0)
+        
         for i in range(x.shape[0]):
             if random.random() > self.p:
                 out[i] = x[i] 
@@ -551,32 +549,32 @@ class StainAugmentor(nn.Module):
 
 
 
-def Robin_version(arg_gpu):
+def Robin_version():
     stain_matrix_mins: Tuple[float, float] = ((0.4, 0.3), (0.5, 0.5), (0.3, 0.3)),
     stain_matrix_maxs: Tuple[float, float] = ((0.7, 0.5), (1, 1), (0.7, 0.7))
-    return StainAugmentor(alpha_range=(0.67, 1.5), stain_matrix_mins=stain_matrix_mins,
-                          stain_matrix_maxs=stain_matrix_maxs, color_system="rgb", arg_gpu=arg_gpu)
+    return StainAugmentor(od_mins=(0, 0), od_maxs=(3, 3), stain_matrix_mins=stain_matrix_mins,
+                          stain_matrix_maxs=stain_matrix_maxs, color_system="rgb")
 
 
-def realistic_version(arg_gpu):
+def realistic_version():
     stain_matrix_mins: Tuple[float, float] = ((0.75, 0.80), (0.15, 0.2), (0.4, 0.6)),
     stain_matrix_maxs: Tuple[float, float] = ((0.80, 1), (0.6, 0.7), (0.8, 0.9))
-    return StainAugmentor(alpha_range=(0.67, 1.5), stain_matrix_mins=stain_matrix_mins,
-                          stain_matrix_maxs=stain_matrix_maxs, color_system="hsv", arg_gpu=arg_gpu)
+    return StainAugmentor(od_mins=(0, 0), od_maxs=(3, 3), stain_matrix_mins=stain_matrix_mins,
+                          stain_matrix_maxs=stain_matrix_maxs, color_system="hsv")
 
 
-def free_hue_version(arg_gpu):
+def free_hue_version():
     stain_matrix_mins: Tuple[float, float] = ((0, 0), (0.15, 0.2), (0.4, 0.6)),
     stain_matrix_maxs: Tuple[float, float] = ((1, 1), (0.6, 0.7), (0.8, 0.9))
-    return StainAugmentor(alpha_range=(0.67, 1.5), stain_matrix_mins=stain_matrix_mins,
-                          stain_matrix_maxs=stain_matrix_maxs, color_system="hsv", arg_gpu=arg_gpu)
+    return StainAugmentor(od_mins=(0, 0), od_maxs=(3, 3), stain_matrix_mins=stain_matrix_mins,
+                          stain_matrix_maxs=stain_matrix_maxs, color_system="hsv")
 
 
-def all_free_version(arg_gpu):
+def all_free_version():
     stain_matrix_mins: Tuple[float, float] = ((0, 0), (0, 0), (0, 0))
     stain_matrix_maxs: Tuple[float, float] = ((1, 1), (1, 1), (1, 1))
-    return StainAugmentor(alpha_range=(0.67, 1.5), stain_matrix_mins=stain_matrix_mins,
-                          stain_matrix_maxs=stain_matrix_maxs, color_system="rgb", arg_gpu=arg_gpu)
+    return StainAugmentor(od_mins=(0, 0), od_maxs=(3, 3), stain_matrix_mins=stain_matrix_mins,
+                          stain_matrix_maxs=stain_matrix_maxs, color_system="rgb")
 
 
     
