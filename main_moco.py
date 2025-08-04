@@ -29,18 +29,20 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader
+
 
 import moco.builder
 import moco.loader
 import moco.optimizer
-import moco.stain_augmentation
+from moco import stain_augmentation
 
 import vits
 
 import os
 import glob
 import subprocess
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 
@@ -171,26 +173,24 @@ def main_worker(gpu, ngpus_per_node, args):
     tar_files = glob.glob(os.path.join(source_dir, "*.tar"))
 
     def mount_archive(archive_path):
-	    filename = os.path.basename(archive_path)
-	    tcga_id = filename.split('.')[0]
-	    target_path = os.path.join(target_base_dir, tcga_id)
-	
-	    if not os.path.is_dir(target_path):
-		    os.makedirs(target_path)
-		
-		    subprocess.run(
-			    ["ratarmount", "--recursive", archive_path, target_path], 
-			    stdout=subprocess.DEVNULL,
-			    check=True
-		    )
+        filename = os.path.basename(archive_path)
+        tcga_id = filename.split('.')[0]
+        target_path = os.path.join(target_base_dir, tcga_id)
+
+        if not os.path.is_dir(target_path):
+            os.makedirs(target_path)
+
+            subprocess.run(
+                ["ratarmount", "--recursive", archive_path, target_path], 
+                stdout=subprocess.DEVNULL,
+                check=True
+            )
 
 
-    with ProcessPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(mount_archive, tar): tar for tar in tar_files}
-        for _ in tqdm(as_completed(futures), total=len(futures), desc="Mounting TARs"):
-            pass 
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        list(tqdm(executor.map(mount_archive, tar_files), total=len(tar_files), desc="Mounting TARs")) 
 
-    print(f"Dataset mounted.")
+    print(f"Dataset mounted : {len(os.listdir(target_base_dir))} slides.")
 
 
     args.gpu = gpu
@@ -328,7 +328,7 @@ def main_worker(gpu, ngpus_per_node, args):
         traindir,
         moco.loader.TwoCropsTransform(transforms.Compose(augmentation1), 
                                       transforms.Compose(augmentation2)))"""
-    train_dataset = loader.TileDataset(traindir)
+    train_dataset = moco.loader.TileDataset(traindir)
     print(f"Created dataset of size {len(train_dataset)}")    
 
     if args.distributed:
@@ -345,7 +345,7 @@ def main_worker(gpu, ngpus_per_node, args):
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
-        collate_fn = get_collate_function(transforms.Compose(augmentation1), 
+        collate_fn = moco.loader.get_collate_function(transforms.Compose(augmentation1), 
                                           transforms.Compose(augmentation2), 
                                           stain_augmentor, arg_gpu=arg.gpu)
     )
