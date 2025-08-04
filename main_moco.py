@@ -170,14 +170,14 @@ def main_worker(gpu, ngpus_per_node, args):
 
     os.makedirs(target_base_dir, exist_ok=True)
 
-    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))
+    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))[:64]
 
     def mount_archive(archive_path):
         filename = os.path.basename(archive_path)
         tcga_id = filename.split('.')[0]
         target_path = os.path.join(target_base_dir, tcga_id)
 
-        if not os.path.is_dir(target_path):
+        if not os.path.isdir(target_path):
             os.makedirs(target_path)
 
             subprocess.run(
@@ -347,7 +347,7 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
         collate_fn = moco.loader.get_collate_function(transforms.Compose(augmentation1), 
                                           transforms.Compose(augmentation2), 
-                                          stain_augmentor, arg_gpu=arg.gpu)
+                                          stain_augmentor, arg_gpu=args.gpu)
     )
     
 
