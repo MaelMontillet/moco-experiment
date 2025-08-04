@@ -341,13 +341,16 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)"""
 
     stain_augmentor = stain_augmentation.all_free_version()
+    collate_fn = moco.loader.MyCollateFunction(
+                                                transforms.Compose(augmentation1), 
+                                                transforms.Compose(augmentation2), 
+                                                stain_augmentor, arg_gpu=args.gpu
+                                                )
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
-        collate_fn = moco.loader.get_collate_function(transforms.Compose(augmentation1), 
-                                          transforms.Compose(augmentation2), 
-                                          stain_augmentor, arg_gpu=args.gpu)
+        collate_fn = collate_fn
     )
     
 
