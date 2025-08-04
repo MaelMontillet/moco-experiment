@@ -268,7 +268,7 @@ def main_worker(gpu, ngpus_per_node, args):
         optimizer = torch.optim.AdamW(model.parameters(), args.lr,
                                 weight_decay=args.weight_decay)
         
-    scaler = torch.cuda.amp.GradScaler()
+    scaler = torch.amp.GradScaler("cuda")
     summary_writer = SummaryWriter() if args.rank == 0 else None
 
     # optionally resume from a checkpoint
@@ -346,10 +346,11 @@ def main_worker(gpu, ngpus_per_node, args):
                                                 transforms.Compose(augmentation2), 
                                                 stain_augmentor, arg_gpu=args.gpu
                                                 )
-
+    #num_workers = args.workers
+    num_workers = 1
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
+        num_workers=num_workers, pin_memory=True, sampler=train_sampler, drop_last=True,
         collate_fn = collate_fn
     )
     

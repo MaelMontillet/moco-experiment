@@ -251,8 +251,13 @@ def _stain_extraction_pca(
 
     # compute eigenvectors (do small 3x3 matrix calculations on the host)
     cov = torch.cov(absorbance)
-
-    _, ev = torch.linalg.eigh(cov)
+    try:
+        _, ev = torch.linalg.eigh(cov)
+    except:
+        print(cov)
+        print(absorbance.shape)
+        for img in absorbance:
+            print(img.mean(), img.std())
     ev = ev[:, [2, 1]]
     # flip to ensure positive first coordinate so arctan2 angles are about 0
     if ev[0, 0] < 0:
@@ -507,9 +512,12 @@ class StainAugmentor(nn.Module):
 
         # Get the concentrations of the image
         absorbance = _image_to_absorbance_matrix(x, channel_axis=0)
-        stain_matrix = stain_extraction_pca(
-            absorbance, image_type="absorbance", channel_axis=0
-        )
+        try:
+            stain_matrix = stain_extraction_pca(
+                absorbance, image_type="absorbance", channel_axis=0
+            )
+        except:
+            print(x.shape)
         HE = _get_raw_concentrations(stain_matrix, absorbance)
         x /= 255
         if HE is None:
