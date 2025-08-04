@@ -170,7 +170,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     os.makedirs(target_base_dir, exist_ok=True)
 
-    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))[:64]
+    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))
 
     def mount_archive(archive_path):
         filename = os.path.basename(archive_path)
@@ -346,11 +346,10 @@ def main_worker(gpu, ngpus_per_node, args):
                                                 transforms.Compose(augmentation2), 
                                                 stain_augmentor, arg_gpu=args.gpu
                                                 )
-    #num_workers = args.workers
-    num_workers = 1
+
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=num_workers, pin_memory=True, sampler=train_sampler, drop_last=True,
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
         collate_fn = collate_fn
     )
     

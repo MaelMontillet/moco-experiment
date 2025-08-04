@@ -251,13 +251,7 @@ def _stain_extraction_pca(
 
     # compute eigenvectors (do small 3x3 matrix calculations on the host)
     cov = torch.cov(absorbance)
-    try:
-        _, ev = torch.linalg.eigh(cov)
-    except:
-        print(cov)
-        print(absorbance.shape)
-        for img in absorbance:
-            print(img.mean(), img.std())
+    _, ev = torch.linalg.eigh(cov)
     ev = ev[:, [2, 1]]
     # flip to ensure positive first coordinate so arctan2 angles are about 0
     if ev[0, 0] < 0:
@@ -292,7 +286,7 @@ def _stain_extraction_pca(
     return stain_coeff
 
 
-def stain_extraction_pca(
+def stain_extraction_pca_absorbance(
     image,
     source_intensity=240,
     alpha=1,
@@ -302,8 +296,7 @@ def stain_extraction_pca(
         (0.7201, 0.8012),
         (0.4062, 0.5581),
     ),
-    channel_axis=0,
-    image_type="intensity",
+    channel_axis=0
 ):
     """Extract the matrix of H & E stain coefficient from an image.
     Uses a method that selects stain vectors based on the angle distribution
@@ -330,11 +323,6 @@ def stain_extraction_pca(
     ---------------------
     channel_axis : int, optional
         The axis corresponding to color channels (default is the last axis).
-    image_type : {"intensity", "absorbance"}, optional
-        With the default `image_type` of `"intensity"`, the image will be
-        transformed to `absorbance` units via ``image_to_absorbance``. If
-        the input `image` is already an absorbance image, then `image_type`
-        should be set to `"absorbance"` instead.
     Returns
     -------
     stain_coeff : cp.ndarray
@@ -354,10 +342,8 @@ def stain_extraction_pca(
            doi: 10.1109/ISBI.2009.5193250.
            http://wwwx.cs.unc.edu/~mn/sites/default/files/macenko2009.pdf
     """
-
-    if (image_type == "intensity" and image.ndim == 3) or (
-        image_type == "absorbance" and image.ndim == 2
-    ):
+    image_type = "absorbance"
+    if image.ndim == 2:
         return _stain_extraction_pca(
             image,
             source_intensity=source_intensity,
@@ -366,12 +352,12 @@ def stain_extraction_pca(
             channel_axis=channel_axis,
             image_type=image_type,
         )
-    elif (image_type == "intensity" and image.ndim == 4) or (
-        image_type == "absorbance" and image.ndim == 3
-    ):
+    elif image.ndim == 3:
         stain_matrix = []
         for im in image:
-            try:
+            use_ref = False
+            # If we keep less than 5 pixels for the pca, we take defaults parameters
+            if torch.sum(torch.all(im > beta, dim=0)) >= 5:
                 sm = _stain_extraction_pca(
                     im,
                     source_intensity=source_intensity,
@@ -381,14 +367,13 @@ def stain_extraction_pca(
                     image_type=image_type,
                 )
                 if torch.det(sm.T @ sm) == 0:
-                    raise ValueError
+                    use_ref = True
+            else:
+                use_ref = True
+            if use_ref:
+                stain_matrix.append(torch.as_tensor(ref_stain_coeff, dtype=image.dtype, device=image.device))
+            else:
                 stain_matrix.append(sm)
-            except ValueError:
-                stain_matrix.append(
-                    torch.as_tensor(
-                        ref_stain_coeff, dtype=image.dtype, device=image.device
-                    )
-                )
         stain_matrix = torch.stack(stain_matrix)
         return stain_matrix
 
@@ -512,12 +497,9 @@ class StainAugmentor(nn.Module):
 
         # Get the concentrations of the image
         absorbance = _image_to_absorbance_matrix(x, channel_axis=0)
-        try:
-            stain_matrix = stain_extraction_pca(
-                absorbance, image_type="absorbance", channel_axis=0
-            )
-        except:
-            print(x.shape)
+        stain_matrix = stain_extraction_pca_absorbance(
+            absorbance, image_type="absorbance", channel_axis=0
+        )
         HE = _get_raw_concentrations(stain_matrix, absorbance)
         x /= 255
         if HE is None:
