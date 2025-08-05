@@ -498,7 +498,7 @@ class StainAugmentor(nn.Module):
         # Get the concentrations of the image
         absorbance = _image_to_absorbance_matrix(x, channel_axis=0)
         stain_matrix = stain_extraction_pca_absorbance(
-            absorbance, image_type="absorbance", channel_axis=0
+            absorbance, channel_axis=0
         )
         HE = _get_raw_concentrations(stain_matrix, absorbance)
         x /= 255

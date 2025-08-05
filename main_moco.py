@@ -170,7 +170,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     os.makedirs(target_base_dir, exist_ok=True)
 
-    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))
+    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))[:33]
 
     def mount_archive(archive_path):
         filename = os.path.basename(archive_path)

@@ -76,6 +76,7 @@ class MyCollateFunction:
         self.base_transform2 = base_transform2
         self.stain_augmentation = stain_augmentation
         self.arg_gpu = arg_gpu
+        self.to_tensor = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
     """
     ImageFolder that was used in default MoCo v3 automatically assign a labels to images 
@@ -85,9 +86,9 @@ class MyCollateFunction:
     """
     def __call__(self, img_list): 
         if self.arg_gpu is not None:
-            imgs = torch.stack(v2.ToTensor()(img_list)).cuda(self.arg_gpu)
+            imgs = torch.stack(self.to_tensor(img_list)).cuda(self.arg_gpu)
         else:
-            imgs = torch.stack(v2.ToTensor()(img_list)).cuda()
+            imgs = torch.stack(self.to_tensor(img_list)).cuda()
         stained_batch1 = self.stain_augmentation(imgs)
         stained_batch2 = self.stain_augmentation(imgs)
  
