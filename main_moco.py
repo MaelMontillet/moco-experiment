@@ -299,19 +299,21 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # follow BYOL's augmentation recipe: https://arxiv.org/abs/2006.07733
     augmentation1 = [
-        transforms.RandomResizedCrop(224, scale=(args.crop_min, 1.)),
+        transforms.ToPILImage(),
+        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
         transforms.RandomApply([
             transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
         ], p=0.8),
         transforms.RandomGrayscale(p=0.2),
         transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=1.0),
         transforms.RandomHorizontalFlip(),
-        #transforms.ToTensor(),
+        transforms.ToTensor(),
         normalize
     ]
 
     augmentation2 = [
-        transforms.RandomResizedCrop(224, scale=(args.crop_min, 1.)),
+        transforms.ToPILImage(),
+        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
         transforms.RandomApply([
             transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
         ], p=0.8),
@@ -319,7 +321,7 @@ def main_worker(gpu, ngpus_per_node, args):
         transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=0.1),
         transforms.RandomApply([moco.loader.Solarize()], p=0.2),
         transforms.RandomHorizontalFlip(),
-        #transforms.ToTensor(),
+        transforms.ToTensor(),
         normalize
     ]
 
