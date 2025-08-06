@@ -45,7 +45,6 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
-
 torchvision_model_names = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
     and callable(torchvision_models.__dict__[name]))
@@ -149,6 +148,19 @@ def main():
 
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
+    # Mount dataset
+    tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
+
+    print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
+
+    subprocess.run(
+                ["ratarmount", *tar_files, args.data],
+                stdout=subprocess.DEVNULL,
+                check=True
+            )
+
+    print(f"Dataset mounted : {len(os.listdir(target_base_dir))} slides.")
+
     ngpus_per_node = torch.cuda.device_count()
     if args.multiprocessing_distributed:
         # Since we have ngpus_per_node processes per node, the total world_size
@@ -163,35 +175,6 @@ def main():
 
 
 def main_worker(gpu, ngpus_per_node, args):
-
-    print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
-    source_dir = args.tar_dir
-    target_base_dir = args.data
-
-    os.makedirs(target_base_dir, exist_ok=True)
-
-    tar_files = glob.glob(os.path.join(source_dir, "*.tar"))[:33]
-
-    def mount_archive(archive_path):
-        filename = os.path.basename(archive_path)
-        tcga_id = filename.split('.')[0]
-        target_path = os.path.join(target_base_dir, tcga_id)
-
-        if not os.path.isdir(target_path):
-            os.makedirs(target_path)
-
-            subprocess.run(
-                ["ratarmount", "--recursive", archive_path, target_path], 
-                stdout=subprocess.DEVNULL,
-                check=True
-            )
-
-
-    with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        list(tqdm(executor.map(mount_archive, tar_files), total=len(tar_files), desc="Mounting TARs")) 
-
-    print(f"Dataset mounted : {len(os.listdir(target_base_dir))} slides.")
-
 
     args.gpu = gpu
 
