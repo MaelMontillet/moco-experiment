@@ -199,7 +199,7 @@ def main_worker(gpu, ngpus_per_node, args):
             # global rank among all the processes
             args.rank = args.rank * ngpus_per_node + gpu
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size, rank=args.rank)
+                                world_size=args.world_size, rank=args.rank, device_id=args.gpu)
         torch.distributed.barrier()
     # create model
     print("=> creating model '{}'".format(args.arch))
