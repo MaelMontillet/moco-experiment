@@ -163,7 +163,7 @@ def main():
                 check=True
             )
 
-    print(f"Dataset mounted : {len(os.listdir(args.data))} slides.")
+    print(f"Dataset mounted : {len(os.listdir(args.data))} tiles.")
 
     ngpus_per_node = torch.cuda.device_count()
     if args.multiprocessing_distributed:
