@@ -149,17 +149,21 @@ def main():
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
 
     # Mount dataset
+
+    # Create target dir
+    os.makedirs(args.data, exist_ok=True)
+
+    # Mount all slides into the target dir
     tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
 
     print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
 
     subprocess.run(
                 ["ratarmount", *tar_files, args.data],
-                stdout=subprocess.DEVNULL,
                 check=True
             )
 
-    print(f"Dataset mounted : {len(os.listdir(target_base_dir))} slides.")
+    print(f"Dataset mounted : {len(os.listdir(args.data))} slides.")
 
     ngpus_per_node = torch.cuda.device_count()
     if args.multiprocessing_distributed:
