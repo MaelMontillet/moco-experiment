@@ -125,6 +125,7 @@ parser.add_argument('--warmup-epochs', default=10, type=int, metavar='N',
 parser.add_argument('--crop-min', default=0.08, type=float,
                     help='minimum scale for random cropping (default: 0.08)')
 parser.add_argument('--tar-dir', help="Directory from which we mount the tars")
+parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)")
 
 def main():
     args = parser.parse_args()
@@ -165,13 +166,16 @@ def main():
 
     print(f"Dataset mounted : {len(os.listdir(args.data))} tiles.")
 
-    ngpus_per_node = torch.cuda.device_count()
+    ngpus_per_node = args.num_gpu
+    print(f"Using {args.num_gpu} among {torch.cuda.device_count()} detected.")
+
     if args.multiprocessing_distributed:
         # Since we have ngpus_per_node processes per node, the total world_size
         # needs to be adjusted accordingly
         args.world_size = ngpus_per_node * args.world_size
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
+        print("Lauching workers.")
         mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
@@ -180,16 +184,18 @@ def main():
 
 def main_worker(gpu, ngpus_per_node, args):
 
+    print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
 
     # suppress printing if not first GPU on each node
     if args.multiprocessing_distributed and (args.gpu != 0 or args.rank != 0):
+        print(f"Supress printing for gpu {gpu}")
         def print_pass(*args):
             pass
         builtins.print = print_pass
 
-    if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))
+    """if args.gpu is not None:
+        print("Use GPU: {} for training".format(args.gpu))"""
 
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
@@ -198,9 +204,12 @@ def main_worker(gpu, ngpus_per_node, args):
             # For multiprocessing distributed training, rank needs to be the
             # global rank among all the processes
             args.rank = args.rank * ngpus_per_node + gpu
+        print(f"Init group process (gpu = {gpu}, rank = {args.rank})")
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank, device_id=args.gpu)
+        print("Barrier: Waiting for all processes to reach the same point.")
         torch.distributed.barrier()
+        print("All processes reached the barrier.")
     # create model
     print("=> creating model '{}'".format(args.arch))
     if args.arch.startswith('vit'):
@@ -246,6 +255,7 @@ def main_worker(gpu, ngpus_per_node, args):
         # AllGather/rank implementation in this code only supports DistributedDataParallel.
         raise NotImplementedError("Only DistributedDataParallel is supported.")
     #print(model) # print model after SyncBatchNorm
+    print("Model created.")
 
     if args.optimizer == 'lars':
         optimizer = moco.optimizer.LARS(model.parameters(), args.lr,
@@ -317,10 +327,12 @@ def main_worker(gpu, ngpus_per_node, args):
         traindir,
         moco.loader.TwoCropsTransform(transforms.Compose(augmentation1), 
                                       transforms.Compose(augmentation2)))"""
+    print("Creating dataset...")
     train_dataset = moco.loader.TileDataset(traindir)
     print(f"Created dataset of size {len(train_dataset)}")    
 
     if args.distributed:
+        print("Using distributed sampler.")
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
     else:
         train_sampler = None
@@ -341,7 +353,7 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
         collate_fn = collate_fn
     )
-    
+    print("DataLoader created, starting training")
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
