@@ -25,7 +25,6 @@ import torch.optim
 import torch.multiprocessing as mp
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
@@ -42,8 +41,8 @@ import vits
 import os
 import glob
 import subprocess
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
+from torchvision.transforms import v2
+
 
 torchvision_model_names = sorted(name for name in torchvision_models.__dict__
     if name.islower() and not name.startswith("__")
@@ -297,42 +296,34 @@ def main_worker(gpu, ngpus_per_node, args):
 
     # Data loading code
     traindir = args.data
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+    normalize = v2.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
     # follow BYOL's augmentation recipe: https://arxiv.org/abs/2006.07733
     augmentation1 = [
-        transforms.ToPILImage(),
-        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-        transforms.RandomApply([
-            transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
+        v2.RandomResizedCrop(224, scale=(args.crop_min, 1.)),
+        v2.RandomApply([
+            v2.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
         ], p=0.8),
-        transforms.RandomGrayscale(p=0.2),
-        transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=1.0),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
+        v2.RandomGrayscale(p=0.2),
+        v2.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=1.0),
+        v2.RandomHorizontalFlip(),
         normalize
     ]
 
     augmentation2 = [
-        transforms.ToPILImage(),
-        transforms.RandomResizedCrop(224, scale=(0.2, 1.)),
-        transforms.RandomApply([
-            transforms.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
+        v2.RandomResizedCrop(224, scale=(args.crop_min, 1.)),
+        v2.RandomApply([
+            v2.ColorJitter(0.4, 0.4, 0.2, 0.1)  # not strengthened
         ], p=0.8),
-        transforms.RandomGrayscale(p=0.2),
-        transforms.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=0.1),
-        transforms.RandomApply([moco.loader.Solarize()], p=0.2),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
+        v2.RandomGrayscale(p=0.2),
+        v2.RandomApply([moco.loader.GaussianBlur([.1, 2.])], p=0.1),
+        v2.RandomApply([moco.loader.Solarize()], p=0.2),
+        v2.RandomHorizontalFlip(),
         normalize
     ]
 
 
-    """train_dataset = datasets.ImageFolder(
-        traindir,
-        moco.loader.TwoCropsTransform(transforms.Compose(augmentation1), 
-                                      transforms.Compose(augmentation2)))"""
     print("Creating dataset...")
     train_dataset = moco.loader.TileDataset(traindir)
     print(f"Created dataset of size {len(train_dataset)}")    
@@ -348,11 +339,10 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)"""
 
     stain_augmentor = stain_augmentation.all_free_version()
-    collate_fn = moco.loader.MyCollateFunction(
-                                                transforms.Compose(augmentation1), 
-                                                transforms.Compose(augmentation2), 
-                                                stain_augmentor, arg_gpu=args.gpu
-                                                )
+    my_transform = moco.loader.CustomTransform( v2.Compose(augmentation1), 
+                                                v2.Compose(augmentation2), 
+                                                stain_augmentor, arg_gpu=args.gpu)
+    collate_fn = moco.loader.MyCollateFunction()
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
@@ -366,7 +356,7 @@ def main_worker(gpu, ngpus_per_node, args):
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-        train(train_loader, model, optimizer, scaler, summary_writer, epoch, args)
+        train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, transform=my_transform)
 
         if not args.multiprocessing_distributed or (args.multiprocessing_distributed
                 and args.rank == 0): # only the first GPU saves checkpoint
@@ -381,7 +371,7 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.rank == 0:
         summary_writer.close()
 
-def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
+def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, transform):
     print("In train function")
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
@@ -399,8 +389,11 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
     iters_per_epoch = len(train_loader)
     moco_m = args.moco_m
     print("Just before loading")
-    for i, (images, _) in enumerate(train_loader):
+    for i, batch in enumerate(train_loader):
         print("Loaded")
+
+        images = transform(batch)
+
         # measure data loading time
         data_time.update(time.time() - end)
 

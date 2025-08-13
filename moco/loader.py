@@ -4,14 +4,12 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
-from PIL import Image, ImageFilter, ImageOps
-import math
-import random
-import torchvision.transforms.functional as tf
+from PIL import Image
 from torchvision.transforms import v2
 from torch.utils.data import Dataset
 import os
 import torch
+from math import ceil
 
 
 class TwoCropsTransform:
@@ -34,8 +32,11 @@ class GaussianBlur(object):
         self.sigma = sigma
 
     def __call__(self, x):
-        sigma = random.uniform(self.sigma[0], self.sigma[1])
-        x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        #sigma = random.uniform(self.sigma[0], self.sigma[1])
+        #x = x.filter(ImageFilter.GaussianBlur(radius=sigma))
+        sigma = self.sigma[0] + torch.rand(1).item() * 2.0
+        k = 2 * ceil(4 * sigma + 0.5) + 1
+        x = v2.functional.gaussian_blur(x, kernel_size=k, sigma=sigma)
         return x
 
 
@@ -43,7 +44,8 @@ class Solarize(object):
     """Solarize augmentation from BYOL: https://arxiv.org/abs/2006.07733"""
 
     def __call__(self, x):
-        return ImageOps.solarize(x)
+        #return ImageOps.solarize(x)
+        return v2.functional.solarize(x, threshold=0.5) 
 
 
 
@@ -66,49 +68,49 @@ class TileDataset(Dataset):
         return image
 
 from time import time
-import numpy as np
+
 
 class MyCollateFunction:
 
-    def __init__(self, base_transform1, base_transform2, stain_augmentation, arg_gpu=None):
+    def __init__(self):
+        self.to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
+
+    def __call__(self, img_list):
+        return torch.stack(self.to_tensor(img_list))
+
+class CustomTransform:
+
+    def __init__(self, base_transform1, base_transform2, stain_augmentation):
         self.base_transform1 = base_transform1
         self.base_transform2 = base_transform2
         self.stain_augmentation = stain_augmentation
-        self.arg_gpu = arg_gpu
-        self.to_tensor = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
     """
-    ImageFolder that was used in default MoCo v3 automatically assign a labels to images 
-    corresponding to the folder of the images. 
-    This label isn't use so we just return None in addition of data to have the correct 
-    output form but it is never used. 
+    Fonction called after the loading to transform the batch into to batch transformed using the stain transformation and MoCo.
     """
-    def __call__(self, img_list): 
+    def __call__(self, batch): 
         
-        print(f"In collate function, GPU: {self.arg_gpu}")
-        if self.arg_gpu is not None:
-            imgs = torch.stack(self.to_tensor(img_list)).cuda(self.arg_gpu)
-        else:
-            imgs = torch.stack(self.to_tensor(img_list)).cuda()
+        print(f"Transforming images.")
 
         t = time()
-        stained_batch1 = self.stain_augmentation(imgs)
-        stained_batch2 = self.stain_augmentation(imgs)
-        print(f"Staining time on GPU: {self.arg_gpu} : {np.round(time() - t, 4)}")
+        stained_batch1 = self.stain_augmentation(batch)
+        stained_batch2 = self.stain_augmentation(batch)
+        print(f"Staining time: {round(time() - t, 4)}")
 
         batch1 = []
         batch2 = []
 
         t = time()
-        for i in range(len(img_list)):
-            first_crop = self.base_transform1(stained_batch1[i].cpu())
+        for i in range(len(batch)):
+            print(stained_batch1[i].shape)
+            first_crop = self.base_transform1(stained_batch1[i])
             batch1.append(first_crop)
-            second_crop = self.base_transform2(stained_batch2[i].cpu())
+            second_crop = self.base_transform2(stained_batch2[i])
             batch2.append(second_crop)
 
         batch1 = torch.stack(batch1)
         batch2 = torch.stack(batch2)
 
-        print(f"Augmentation time on GPU: {self.arg_gpu} : {np.round(time() - t, 4)}")
+        print(f"Augmentation time: {round(time() - t, 4)}")
 
-        return (batch1, batch2), None
+        return [batch1, batch2]
