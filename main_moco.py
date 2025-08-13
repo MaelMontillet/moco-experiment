@@ -77,7 +77,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-6, type=float,
                     metavar='W', help='weight decay (default: 1e-6)',
                     dest='weight_decay')
-parser.add_argument('-p', '--print-freq', default=10, type=int,
+parser.add_argument('-p', '--print-freq', default=1, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
@@ -85,7 +85,7 @@ parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
                     help='node rank for distributed training')
-parser.add_argument('--dist-url', default='tcp://224.66.41.62:23456', type=str,
+parser.add_argument('--dist-url', default='file://shared_file', type=str,
                     help='url used to set up distributed training')
 parser.add_argument('--dist-backend', default='nccl', type=str,
                     help='distributed backend')
@@ -125,9 +125,11 @@ parser.add_argument('--warmup-epochs', default=10, type=int, metavar='N',
 parser.add_argument('--crop-min', default=0.08, type=float,
                     help='minimum scale for random cropping (default: 0.08)')
 parser.add_argument('--tar-dir', help="Directory from which we mount the tars")
-parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)")
+parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
+parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 
 def main():
+    print("Parsing arguments")
     args = parser.parse_args()
 
     if args.seed is not None:
@@ -148,21 +150,24 @@ def main():
         args.world_size = int(os.environ["WORLD_SIZE"])
 
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
-
+    
+    print("url :", args.dist_url)
     # Mount dataset
 
     # Create target dir
     os.makedirs(args.data, exist_ok=True)
-
-    # Mount all slides into the target dir
-    tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
-
     print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
 
-    subprocess.run(
-                ["ratarmount", *tar_files, args.data],
-                check=True
-            )
+    if len(os.listdir(args.data)) > 1:
+        print("Dataset alredy mounted")
+    else:
+        # Mount all slides into the target dir
+        tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
+
+        subprocess.run(
+                    ["ratarmount", *tar_files, args.data],
+                    check=True
+                )
 
     print(f"Dataset mounted : {len(os.listdir(args.data))} tiles.")
 
@@ -187,12 +192,12 @@ def main_worker(gpu, ngpus_per_node, args):
     print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
 
-    # suppress printing if not first GPU on each node
+    """# suppress printing if not first GPU on each node
     if args.multiprocessing_distributed and (args.gpu != 0 or args.rank != 0):
         print(f"Supress printing for gpu {gpu}")
         def print_pass(*args):
             pass
-        builtins.print = print_pass
+        builtins.print = print_pass"""
 
     """if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))"""
@@ -206,7 +211,8 @@ def main_worker(gpu, ngpus_per_node, args):
             args.rank = args.rank * ngpus_per_node + gpu
         print(f"Init group process (gpu = {gpu}, rank = {args.rank})")
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size, rank=args.rank, device_id=args.gpu)
+                                world_size=args.world_size, rank=args.rank, 
+                                device_id=torch.device(f"cuda:{args.gpu}"))
         print("Barrier: Waiting for all processes to reach the same point.")
         torch.distributed.barrier()
         print("All processes reached the barrier.")
@@ -370,12 +376,13 @@ def main_worker(gpu, ngpus_per_node, args):
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
                 'scaler': scaler.state_dict(),
-            }, is_best=False, filename='checkpoint_%04d.pth.tar' % epoch)
-
+            }, is_best=False, filename=os.path.join(args.output, 'checkpoint_%04d.pth.tar' % epoch))
+    
     if args.rank == 0:
         summary_writer.close()
 
 def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
+    print("In train function")
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     learning_rates = AverageMeter('LR', ':.4e')
@@ -391,7 +398,9 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
     end = time.time()
     iters_per_epoch = len(train_loader)
     moco_m = args.moco_m
+    print("Just before loading")
     for i, (images, _) in enumerate(train_loader):
+        print("Loaded")
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -406,18 +415,20 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args):
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
 
         # compute output
-        with torch.cuda.amp.autocast(True):
+        with torch.amp.autocast("cuda", enabled=True):
             loss = model(images[0], images[1], moco_m)
 
         losses.update(loss.item(), images[0].size(0))
         if args.rank == 0:
-            summary_writer.add_scalar("loss", loss.item(), epoch * iters_per_epoch + i)
+            summary_writer.add_scalar(f"loss", loss.item(), epoch * iters_per_epoch + i)
 
+        print("Backpropagation...")
         # compute gradient and do SGD step
         optimizer.zero_grad()
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
+        print("Backpropagation done.")
 
         # measure elapsed time
         batch_time.update(time.time() - end)

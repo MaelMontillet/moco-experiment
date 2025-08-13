@@ -53,12 +53,9 @@ class TileDataset(Dataset):
         self.root_dir = root_dir
         self.tile_paths = []
 
-        for slide_dir in os.listdir(root_dir):
-            slide_path = os.path.join(root_dir, slide_dir)
-            if os.path.isdir(slide_path):
-                for tile_file in os.listdir(slide_path):
-                    if tile_file.endswith(('.png', '.jpg', '.jpeg')):
-                        self.tile_paths.append(os.path.join(slide_path, tile_file))
+        for tile_file in os.listdir(root_dir):
+            if tile_file.endswith(('.png', '.jpg', '.jpeg')):
+                self.tile_paths.append(os.path.join(root_dir, tile_file))
 
     def __len__(self):
         return len(self.tile_paths)
@@ -68,6 +65,8 @@ class TileDataset(Dataset):
         image = Image.open(tile_path).convert("RGB")
         return image
 
+from time import time
+import numpy as np
 
 class MyCollateFunction:
 
@@ -85,16 +84,22 @@ class MyCollateFunction:
     output form but it is never used. 
     """
     def __call__(self, img_list): 
+        
+        print(f"In collate function, GPU: {self.arg_gpu}")
         if self.arg_gpu is not None:
             imgs = torch.stack(self.to_tensor(img_list)).cuda(self.arg_gpu)
         else:
             imgs = torch.stack(self.to_tensor(img_list)).cuda()
+
+        t = time()
         stained_batch1 = self.stain_augmentation(imgs)
         stained_batch2 = self.stain_augmentation(imgs)
- 
+        print(f"Staining time on GPU: {self.arg_gpu} : {np.round(time() - t, 4)}")
+
         batch1 = []
         batch2 = []
 
+        t = time()
         for i in range(len(img_list)):
             first_crop = self.base_transform1(stained_batch1[i].cpu())
             batch1.append(first_crop)
@@ -103,5 +108,7 @@ class MyCollateFunction:
 
         batch1 = torch.stack(batch1)
         batch2 = torch.stack(batch2)
+
+        print(f"Augmentation time on GPU: {self.arg_gpu} : {np.round(time() - t, 4)}")
 
         return (batch1, batch2), None
