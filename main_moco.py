@@ -42,6 +42,12 @@ import os
 import glob
 import subprocess
 from torchvision.transforms import v2
+from math import floor
+
+
+
+torch.multiprocessing.set_start_method('forkserver', force=True)
+
 
 
 torchvision_model_names = sorted(name for name in torchvision_models.__dict__
@@ -123,11 +129,20 @@ parser.add_argument('--warmup-epochs', default=10, type=int, metavar='N',
                     help='number of warmup epochs')
 parser.add_argument('--crop-min', default=0.08, type=float,
                     help='minimum scale for random cropping (default: 0.08)')
+
+
+# add with th fork
 parser.add_argument('--tar-dir', help="Directory from which we mount the tars")
 parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 
+
+
 def main():
+
+    os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
+    os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
+
     print("Parsing arguments")
     args = parser.parse_args()
 
@@ -187,6 +202,9 @@ def main():
 
 
 def main_worker(gpu, ngpus_per_node, args):
+
+    max_number_threads = floor(args.workers/args.ngpus_per_node)
+    torch.set_num_threads(max_number_threads)
 
     print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
@@ -346,7 +364,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, sampler=train_sampler, drop_last=True, pin_memory=True,
+        num_workers=max_number_threads, sampler=train_sampler, drop_last=True, pin_memory=True,
         collate_fn = collate_fn
     )
     print("DataLoader created, starting training")
