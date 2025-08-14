@@ -90,19 +90,16 @@ class CustomTransform:
     """
     def __call__(self, batch): 
         
-        print(f"Transforming images.")
 
         t = time()
         stained_batch1 = self.stain_augmentation(batch)
         stained_batch2 = self.stain_augmentation(batch)
-        print(f"Staining time: {round(time() - t, 4)}")
 
         batch1 = []
         batch2 = []
 
         t = time()
         for i in range(len(batch)):
-            print(stained_batch1[i].shape)
             first_crop = self.base_transform1(stained_batch1[i])
             batch1.append(first_crop)
             second_crop = self.base_transform2(stained_batch2[i])
@@ -110,7 +107,5 @@ class CustomTransform:
 
         batch1 = torch.stack(batch1)
         batch2 = torch.stack(batch2)
-
-        print(f"Augmentation time: {round(time() - t, 4)}")
 
         return [batch1, batch2]

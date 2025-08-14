@@ -191,12 +191,12 @@ def main_worker(gpu, ngpus_per_node, args):
     print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
 
-    """# suppress printing if not first GPU on each node
+    # suppress printing if not first GPU on each node
     if args.multiprocessing_distributed and (args.gpu != 0 or args.rank != 0):
         print(f"Supress printing for gpu {gpu}")
         def print_pass(*args):
             pass
-        builtins.print = print_pass"""
+        builtins.print = print_pass
 
     """if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))"""
@@ -339,14 +339,14 @@ def main_worker(gpu, ngpus_per_node, args):
         num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)"""
 
     stain_augmentor = stain_augmentation.all_free_version()
-    my_transform = moco.loader.CustomTransform( v2.Compose(augmentation1), 
-                                                v2.Compose(augmentation2), 
-                                                stain_augmentor, arg_gpu=args.gpu)
+    my_transform = moco.loader.CustomTransform(v2.Compose(augmentation1), 
+                                               v2.Compose(augmentation2), 
+                                               stain_augmentor)
     collate_fn = moco.loader.MyCollateFunction()
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True,
+        num_workers=args.workers, sampler=train_sampler, drop_last=True, pin_memory=True,
         collate_fn = collate_fn
     )
     print("DataLoader created, starting training")
@@ -390,7 +390,9 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
     moco_m = args.moco_m
     print("Just before loading")
     for i, batch in enumerate(train_loader):
-        print("Loaded")
+
+        if args.gpu is not None:
+            batch = batch.cuda(args.gpu, non_blocking=True)
 
         images = transform(batch)
 
@@ -403,9 +405,9 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
         if args.moco_m_cos:
             moco_m = adjust_moco_momentum(epoch + i / iters_per_epoch, args)
 
-        if args.gpu is not None:
+        """if args.gpu is not None:
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
-            images[1] = images[1].cuda(args.gpu, non_blocking=True)
+            images[1] = images[1].cuda(args.gpu, non_blocking=True)"""
 
         # compute output
         with torch.amp.autocast("cuda", enabled=True):
@@ -415,13 +417,11 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
         if args.rank == 0:
             summary_writer.add_scalar(f"loss", loss.item(), epoch * iters_per_epoch + i)
 
-        print("Backpropagation...")
         # compute gradient and do SGD step
         optimizer.zero_grad()
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
-        print("Backpropagation done.")
 
         # measure elapsed time
         batch_time.update(time.time() - end)
