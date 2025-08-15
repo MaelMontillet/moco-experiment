@@ -54,6 +54,7 @@ class TileDataset(Dataset):
     def __init__(self, root_dir):
         self.root_dir = root_dir
         self.tile_paths = []
+        self.to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
         for tile_file in os.listdir(root_dir):
             if tile_file.endswith(('.png', '.jpg', '.jpeg')):
@@ -65,7 +66,7 @@ class TileDataset(Dataset):
     def __getitem__(self, idx):
         tile_path = self.tile_paths[idx]
         image = Image.open(tile_path).convert("RGB")
-        return image
+        return self.to_tensor(image)
 
 from time import time
 

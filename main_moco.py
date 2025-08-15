@@ -6,6 +6,16 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+
+import os
+
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
+import torch
+torch.set_num_threads(1)
+torch.multiprocessing.set_start_method('spawn', force=True)
+
 import argparse
 import builtins
 import math
@@ -43,10 +53,7 @@ import glob
 import subprocess
 from torchvision.transforms import v2
 from math import floor
-
-
-
-torch.multiprocessing.set_start_method('forkserver', force=True)
+import psutil
 
 
 
@@ -82,7 +89,7 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
 parser.add_argument('--wd', '--weight-decay', default=1e-6, type=float,
                     metavar='W', help='weight decay (default: 1e-6)',
                     dest='weight_decay')
-parser.add_argument('-p', '--print-freq', default=1, type=int,
+parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
@@ -139,7 +146,9 @@ parser.add_argument('--output', help="path to the directory where the checkpoint
 
 
 def main():
-
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    torch.set_num_threads(1)
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
     os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
 
@@ -200,11 +209,21 @@ def main():
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
 
+def worker_init_fn(worker_id):
+    # Limit threads inside each DataLoader worker
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    torch.set_num_threads(1)
+    #time.sleep(worker_id * 0.1)
+        
 
 def main_worker(gpu, ngpus_per_node, args):
 
-    max_number_threads = floor(args.workers/args.ngpus_per_node)
-    torch.set_num_threads(max_number_threads)
+    max_number_threads = 1
+    os.environ["OMP_NUM_THREADS"] = "1"
+    os.environ["MKL_NUM_THREADS"] = "1"
+    torch.set_num_threads(1)
+   
 
     print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
@@ -229,7 +248,8 @@ def main_worker(gpu, ngpus_per_node, args):
         print(f"Init group process (gpu = {gpu}, rank = {args.rank})")
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank, 
-                                device_id=torch.device(f"cuda:{args.gpu}"))
+                                device_id=torch.device(f"cuda:{args.gpu}")
+                                )
         print("Barrier: Waiting for all processes to reach the same point.")
         torch.distributed.barrier()
         print("All processes reached the barrier.")
@@ -245,8 +265,8 @@ def main_worker(gpu, ngpus_per_node, args):
             args.moco_dim, args.moco_mlp_dim, args.moco_t)
 
     # infer learning rate before changing batch size
-    args.lr = args.lr * args.batch_size / 256
-
+    args.lr = args.lr * args.batch_size / 256 
+    
     if not torch.cuda.is_available():
         print('using CPU, this will be slow')
     elif args.distributed:
@@ -360,12 +380,15 @@ def main_worker(gpu, ngpus_per_node, args):
     my_transform = moco.loader.CustomTransform(v2.Compose(augmentation1), 
                                                v2.Compose(augmentation2), 
                                                stain_augmentor)
-    collate_fn = moco.loader.MyCollateFunction()
+    #collate_fn = moco.loader.MyCollateFunction()
 
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=max_number_threads, sampler=train_sampler, drop_last=True, pin_memory=True,
-        collate_fn = collate_fn
+        sampler=train_sampler, drop_last=True, pin_memory=True, 
+        num_workers=max_number_threads, persistent_workers=True,
+        worker_init_fn=worker_init_fn, 
+        multiprocessing_context=mp.get_context('spawn'),
+        #collate_fn = collate_fn
     )
     print("DataLoader created, starting training")
 
