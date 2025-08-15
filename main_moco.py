@@ -26,7 +26,6 @@ import time
 import warnings
 from functools import partial
 
-import torch
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -139,16 +138,18 @@ parser.add_argument('--crop-min', default=0.08, type=float,
 
 
 # add with th fork
-parser.add_argument('--tar-dir', help="Directory from which we mount the tars")
+parser.add_argument('--tar-dir', help="tar of the dataset, it will be mounted recursively")
 parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 
 
-
-def main():
+def set_threads_num():
     os.environ["OMP_NUM_THREADS"] = "1"
     os.environ["MKL_NUM_THREADS"] = "1"
     torch.set_num_threads(1)
+
+def main():
+    set_threads_num()
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
     os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
 
@@ -182,20 +183,20 @@ def main():
     print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
 
     if len(os.listdir(args.data)) > 1:
-        print("Dataset alredy mounted")
+        print("Dataset already mounted")
     else:
         # Mount all slides into the target dir
-        tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
+        #tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
 
         subprocess.run(
-                    ["ratarmount", *tar_files, args.data],
+                    ["ratarmount", "--recursive", "--recreate-index", args.tar_dir, args.data],
                     check=True
                 )
 
-    print(f"Dataset mounted : {len(os.listdir(args.data))} tiles.")
+    print(f"Dataset mounted : {len(os.listdir(args.data))} slides.")
 
     ngpus_per_node = args.num_gpu
-    print(f"Using {args.num_gpu} among {torch.cuda.device_count()} detected.")
+    print(f"Using {args.num_gpu} among {torch.cuda.device_count()} GPU detected.")
 
     if args.multiprocessing_distributed:
         # Since we have ngpus_per_node processes per node, the total world_size
@@ -210,20 +211,12 @@ def main():
         main_worker(args.gpu, ngpus_per_node, args)
 
 def worker_init_fn(worker_id):
-    # Limit threads inside each DataLoader worker
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    torch.set_num_threads(1)
-    #time.sleep(worker_id * 0.1)
+    set_threads_num()
         
 
 def main_worker(gpu, ngpus_per_node, args):
 
-    max_number_threads = 1
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    torch.set_num_threads(1)
-   
+    set_threads_num()
 
     print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
@@ -234,9 +227,6 @@ def main_worker(gpu, ngpus_per_node, args):
         def print_pass(*args):
             pass
         builtins.print = print_pass
-
-    """if args.gpu is not None:
-        print("Use GPU: {} for training".format(args.gpu))"""
 
     if args.distributed:
         if args.dist_url == "env://" and args.rank == -1:
@@ -333,7 +323,6 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     # Data loading code
-    traindir = args.data
     normalize = v2.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
@@ -363,8 +352,8 @@ def main_worker(gpu, ngpus_per_node, args):
 
 
     print("Creating dataset...")
-    train_dataset = moco.loader.TileDataset(traindir)
-    print(f"Created dataset of size {len(train_dataset)}")    
+    train_dataset = moco.loader.TileDataset(args.data)
+    print(f"Created dataset of {len(train_dataset)} tiles")    
 
     if args.distributed:
         print("Using distributed sampler.")
@@ -372,23 +361,18 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         train_sampler = None
 
-    """train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)"""
 
     stain_augmentor = stain_augmentation.all_free_version()
     my_transform = moco.loader.CustomTransform(v2.Compose(augmentation1), 
                                                v2.Compose(augmentation2), 
                                                stain_augmentor)
-    #collate_fn = moco.loader.MyCollateFunction()
-
+    num_workers = 1
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
         sampler=train_sampler, drop_last=True, pin_memory=True, 
-        num_workers=max_number_threads, persistent_workers=True,
+        num_workers=num_workers, persistent_workers=True,
         worker_init_fn=worker_init_fn, 
         multiprocessing_context=mp.get_context('spawn'),
-        #collate_fn = collate_fn
     )
     print("DataLoader created, starting training")
 
@@ -445,10 +429,6 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
         learning_rates.update(lr)
         if args.moco_m_cos:
             moco_m = adjust_moco_momentum(epoch + i / iters_per_epoch, args)
-
-        """if args.gpu is not None:
-            images[0] = images[0].cuda(args.gpu, non_blocking=True)
-            images[1] = images[1].cuda(args.gpu, non_blocking=True)"""
 
         # compute output
         with torch.amp.autocast("cuda", enabled=True):

@@ -56,9 +56,12 @@ class TileDataset(Dataset):
         self.tile_paths = []
         self.to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
-        for tile_file in os.listdir(root_dir):
-            if tile_file.endswith(('.png', '.jpg', '.jpeg')):
-                self.tile_paths.append(os.path.join(root_dir, tile_file))
+        for slide_dir in os.listdir(root_dir):
+            slide_path = os.path.join(root_dir, slide_dir)
+            if os.path.isdir(slide_path):
+                for tile_file in os.listdir(slide_path):
+                    if tile_file.endswith(('.png', '.jpg', '.jpeg')):
+                        self.tile_paths.append(os.path.join(slide_path, tile_file))
 
     def __len__(self):
         return len(self.tile_paths)
@@ -67,8 +70,6 @@ class TileDataset(Dataset):
         tile_path = self.tile_paths[idx]
         image = Image.open(tile_path).convert("RGB")
         return self.to_tensor(image)
-
-from time import time
 
 
 class MyCollateFunction:
