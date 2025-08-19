@@ -13,8 +13,8 @@ import os
 #os.environ["MKL_NUM_THREADS"] = "1"
 
 import torch
-torch.set_num_threads(1)
-torch.multiprocessing.set_start_method('spawn', force=True)
+#torch.set_num_threads(1)
+#torch.multiprocessing.set_start_method('spawn', force=True)
 
 import argparse
 import builtins
@@ -46,11 +46,9 @@ from moco import stain_augmentation
 
 import vits
 
-import glob
-import subprocess
+
 from torchvision.transforms import v2
-from math import floor
-import psutil
+import webdataset as wds
 
 
 
@@ -180,7 +178,7 @@ def main():
     os.makedirs(args.data, exist_ok=True)
     print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
 
-    if len(os.listdir(args.data)) > 1:
+    """if len(os.listdir(args.data)) > 1:
         print("Dataset already mounted")
     else:
         # Mount all slides into the target dir
@@ -194,7 +192,18 @@ def main():
                     check=True
                 )
 
-    print(f"Dataset mounted : {len(os.listdir(args.data))} slides.")
+    print(f"Dataset mounted : {len(os.listdir(args.data))} slides.")"""
+    print("Creating dataset")
+    to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
+    train_dataset = (
+        wds.WebDataset(os.join(args.tar_dir, "*.tar"))
+        .decode("pil")        
+        .to_tuple("jpg")      
+        .map_tuple(to_tensor) 
+    )
+
+    print(f"Created dataset of {len(train_dataset)} tiles")
+
 
     ngpus_per_node = args.num_gpu
     print(f"Using {args.num_gpu} among {torch.cuda.device_count()} GPU detected.")
@@ -206,7 +215,7 @@ def main():
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
         print("Lauching workers.")
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, train_dataset))
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
@@ -215,7 +224,7 @@ def worker_init_fn(worker_id):
     set_threads_num()
         
 
-def main_worker(gpu, ngpus_per_node, args):
+def main_worker(gpu, ngpus_per_node, args, train_dataset):
 
     set_threads_num()
 
@@ -352,9 +361,9 @@ def main_worker(gpu, ngpus_per_node, args):
     ]
 
 
-    print("Creating dataset...")
+    """print("Creating dataset...")
     train_dataset = moco.loader.TileDataset(args.data)
-    print(f"Created dataset of {len(train_dataset)} tiles")    
+    print(f"Created dataset of {len(train_dataset)} tiles")""" 
 
     if args.distributed:
         print("Using distributed sampler.")
@@ -375,7 +384,7 @@ def main_worker(gpu, ngpus_per_node, args):
         worker_init_fn=worker_init_fn, 
         multiprocessing_context=mp.get_context('spawn'),
     )
-    print("DataLoader created, starting training")
+    print("Starting training")
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
