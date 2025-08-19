@@ -9,8 +9,8 @@
 
 import os
 
-os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+#os.environ["OMP_NUM_THREADS"] = "1"
+#os.environ["MKL_NUM_THREADS"] = "1"
 
 import torch
 torch.set_num_threads(1)
@@ -19,7 +19,6 @@ torch.multiprocessing.set_start_method('spawn', force=True)
 import argparse
 import builtins
 import math
-import os
 import random
 import shutil
 import time
@@ -47,7 +46,6 @@ from moco import stain_augmentation
 
 import vits
 
-import os
 import glob
 import subprocess
 from torchvision.transforms import v2
@@ -149,7 +147,7 @@ def set_threads_num():
     torch.set_num_threads(1)
 
 def main():
-    set_threads_num()
+    #set_threads_num()
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
     os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
 
@@ -189,7 +187,10 @@ def main():
         #tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
 
         subprocess.run(
-                    ["ratarmount", "--recursive", "--recreate-index", args.tar_dir, args.data],
+                    ["ratarmount", 
+                    "--recursive", 
+                    #"--recreate-index", 
+                    args.tar_dir, args.data],
                     check=True
                 )
 
