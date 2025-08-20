@@ -144,6 +144,38 @@ def set_threads_num():
     os.environ["MKL_NUM_THREADS"] = "1"
     torch.set_num_threads(1)
 
+
+from tqdm import tqdm
+import io
+import glob
+from PIL import Image
+
+
+def png_decoder(sample):
+    # find the first key ending with ".png"
+    for k, v in sample.items():
+        if k.endswith(".png"):
+            # decode to PIL
+            sample["png"] = Image.open(io.BytesIO(v)).convert("RGB")
+            break
+    return sample
+
+def is_png(sample):
+    # keep only samples with at least one key ending in ".png"
+    return any(k.endswith(".png") for k in sample.keys())
+
+import tarfile
+from multiprocessing import Pool, cpu_count
+
+def count_png_in_tar(tar_path):
+    """Count PNG files in a single tar file."""
+    count = 0
+    with tarfile.open(tar_path) as tar:
+        for member in tar.getmembers():
+            if member.isfile() and member.name.endswith(".png"):
+                count += 1
+    return count
+
 def main():
     #set_threads_num()
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
@@ -193,16 +225,22 @@ def main():
                 )
 
     print(f"Dataset mounted : {len(os.listdir(args.data))} slides.")"""
-    print("Creating dataset")
-    to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
-    train_dataset = (
-        wds.WebDataset(os.join(args.tar_dir, "*.tar"))
-        .decode("pil")        
-        .to_tuple("jpg")      
-        .map_tuple(to_tensor) 
-    )
+    print("Counting number of files")
+    """count = 0
+    for path in tqdm(tar_files):
+        with tarfile.open(path) as tar:
+            for img in tar.getmembers():
+                if img.isfile() and img.name.endswith("png"):
+                    count += 1"""
 
-    print(f"Created dataset of {len(train_dataset)} tiles")
+    """with Pool(processes=args.workers) as pool:
+        counts = list(tqdm(pool.imap(count_png_in_tar, tar_files), total=len(tar_files)))
+
+    count = sum(counts)
+    print(f"Total: {count}")"""
+    count = 3000000
+
+    #print(f"Created dataset of {len(train_dataset)} tiles")
 
 
     ngpus_per_node = args.num_gpu
@@ -215,7 +253,7 @@ def main():
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
         print("Lauching workers.")
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, train_dataset))
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, count))
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
@@ -224,9 +262,23 @@ def worker_init_fn(worker_id):
     set_threads_num()
         
 
-def main_worker(gpu, ngpus_per_node, args, train_dataset):
+def main_worker(gpu, ngpus_per_node, args, count):
 
     set_threads_num()
+    print("creating dataset")
+
+
+    to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
+
+    tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
+    train_dataset = (
+        wds.WebDataset(tar_files)
+        .select(is_png)      # skip JSON or other files
+        .with_length(count)
+        .map(png_decoder)    # decode and add 'png' key
+        .to_tuple("png")     # now safe to extract
+        .map_tuple(to_tensor)
+    )
 
     print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
