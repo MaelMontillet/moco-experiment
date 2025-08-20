@@ -138,6 +138,7 @@ parser.add_argument('--tar-dir', help="tar of the dataset, it will be mounted re
 parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 parser.add_argument('--cache', help="Cache directory for WebDataset")
+parser.add_argument('--num_tiles', help="Cache directory for WebDataset", type=int, default=3500000)
 
 
 def set_threads_num():
@@ -146,7 +147,6 @@ def set_threads_num():
     torch.set_num_threads(1)
 
 
-from tqdm import tqdm
 import io
 import glob
 from PIL import Image
@@ -165,20 +165,8 @@ def is_png(sample):
     # keep only samples with at least one key ending in ".png"
     return any(k.endswith(".png") for k in sample.keys())
 
-import tarfile
-from multiprocessing import Pool, cpu_count
 
-def count_png_in_tar(tar_path):
-    """Count PNG files in a single tar file."""
-    count = 0
-    with tarfile.open(tar_path) as tar:
-        for member in tar.getmembers():
-            if member.isfile() and member.name.endswith(".png"):
-                count += 1
-    return count
-
-
-def make_dataloader(args, buffer_size=1000, dataset_size = 3000000):
+def make_dataloader(args, buffer_size=1000):
     """Create a DataLoader for training on the ImageNet dataset using WebDataset."""
 
     to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
@@ -212,7 +200,7 @@ def make_dataloader(args, buffer_size=1000, dataset_size = 3000000):
     trainloader = trainloader.unbatched().shuffle(buffer_size).batched(args.batch_size)
 
     # A resampled dataset is infinite size, but we can recreate a fixed epoch length.
-    trainloader = trainloader.with_epoch(dataset_size // args.batch_size)
+    trainloader = trainloader.with_epoch(args.num_tiles // args.batch_size)
 
     return trainloader
 
@@ -266,8 +254,8 @@ def main():
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
 
-def worker_init_fn(worker_id):
-    set_threads_num()
+"""def worker_init_fn(worker_id):
+    set_threads_num()"""
         
 
 def main_worker(gpu, ngpus_per_node, args):
@@ -407,34 +395,17 @@ def main_worker(gpu, ngpus_per_node, args):
     ]
 
 
-    """print("Creating dataset...")
-    train_dataset = moco.loader.TileDataset(args.data)
-    print(f"Created dataset of {len(train_dataset)} tiles")""" 
-
-    if args.distributed:
-        print("Using distributed sampler.")
-        train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
-    else:
-        train_sampler = None
-
-
     stain_augmentor = stain_augmentation.all_free_version()
     my_transform = moco.loader.CustomTransform(v2.Compose(augmentation1), 
                                                v2.Compose(augmentation2), 
                                                stain_augmentor)
     num_workers = 1
-    train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        sampler=train_sampler, drop_last=True, pin_memory=True, 
-        num_workers=num_workers, persistent_workers=True,
-        worker_init_fn=worker_init_fn, 
-        multiprocessing_context=mp.get_context('spawn'),
-    )
+    
+    print("Creating Dataset / DataLoader")
+    train_loader = make_dataloader(args)
     print("Starting training")
 
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            train_sampler.set_epoch(epoch)
 
         # train for one epoch
         train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, transform=my_transform)
