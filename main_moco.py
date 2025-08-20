@@ -137,6 +137,7 @@ parser.add_argument('--crop-min', default=0.08, type=float,
 parser.add_argument('--tar-dir', help="tar of the dataset, it will be mounted recursively")
 parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
+parser.add_argument('--cache', help="Cache directory for WebDataset")
 
 
 def set_threads_num():
@@ -176,7 +177,48 @@ def count_png_in_tar(tar_path):
                 count += 1
     return count
 
+
+def make_dataloader(args, buffer_size=1000, dataset_size = 3000000):
+    """Create a DataLoader for training on the ImageNet dataset using WebDataset."""
+
+    to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
+
+    tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
+    train_dataset = wds.WebDataset(
+        tar_files, 
+        resampled=True,
+        shardshuffle=True,
+        cache_dir=args.cache,
+        nodesplitter=wds.split_by_node
+    )
+    train_dataset = (
+        train_dataset.shuffle(buffer_size)
+        .select(is_png)      # skip JSON or other files
+        .map(png_decoder)    # decode and add 'png' key
+        .to_tuple("png")     # now safe to extract
+        .map_tuple(to_tensor)
+    )
+
+    # For IterableDataset objects, the batching needs to happen in the dataset.
+    trainset = trainset.batched(args.batch_size)
+    trainloader = wds.WebLoader(
+        trainset, batch_size=None, pin_memory=True, 
+        num_workers=args.workers//args.world_size, persistent_workers=True,
+        #worker_init_fn=worker_init_fn, 
+        #multiprocessing_context=mp.get_context('spawn')
+        )
+
+    # We unbatch, shuffle, and rebatch to mix samples from different workers.
+    trainloader = trainloader.unbatched().shuffle(buffer_size).batched(args.batch_size)
+
+    # A resampled dataset is infinite size, but we can recreate a fixed epoch length.
+    trainloader = trainloader.with_epoch(dataset_size // args.batch_size)
+
+    return trainloader
+
+
 def main():
+    
     #set_threads_num()
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
     os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
@@ -208,40 +250,6 @@ def main():
 
     # Create target dir
     os.makedirs(args.data, exist_ok=True)
-    print(f"Mounting the dataset from {args.tar_dir} to {args.data}...")
-
-    """if len(os.listdir(args.data)) > 1:
-        print("Dataset already mounted")
-    else:
-        # Mount all slides into the target dir
-        #tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
-
-        subprocess.run(
-                    ["ratarmount", 
-                    "--recursive", 
-                    #"--recreate-index", 
-                    args.tar_dir, args.data],
-                    check=True
-                )
-
-    print(f"Dataset mounted : {len(os.listdir(args.data))} slides.")"""
-    print("Counting number of files")
-    """count = 0
-    for path in tqdm(tar_files):
-        with tarfile.open(path) as tar:
-            for img in tar.getmembers():
-                if img.isfile() and img.name.endswith("png"):
-                    count += 1"""
-
-    """with Pool(processes=args.workers) as pool:
-        counts = list(tqdm(pool.imap(count_png_in_tar, tar_files), total=len(tar_files)))
-
-    count = sum(counts)
-    print(f"Total: {count}")"""
-    count = 3000000
-
-    #print(f"Created dataset of {len(train_dataset)} tiles")
-
 
     ngpus_per_node = args.num_gpu
     print(f"Using {args.num_gpu} among {torch.cuda.device_count()} GPU detected.")
@@ -253,7 +261,7 @@ def main():
         # Use torch.multiprocessing.spawn to launch distributed processes: the
         # main_worker process function
         print("Lauching workers.")
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args, count))
+        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
     else:
         # Simply call main_worker function
         main_worker(args.gpu, ngpus_per_node, args)
@@ -262,23 +270,9 @@ def worker_init_fn(worker_id):
     set_threads_num()
         
 
-def main_worker(gpu, ngpus_per_node, args, count):
+def main_worker(gpu, ngpus_per_node, args):
 
-    set_threads_num()
-    print("creating dataset")
-
-
-    to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
-
-    tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
-    train_dataset = (
-        wds.WebDataset(tar_files)
-        .select(is_png)      # skip JSON or other files
-        .with_length(count)
-        .map(png_decoder)    # decode and add 'png' key
-        .to_tuple("png")     # now safe to extract
-        .map_tuple(to_tensor)
-    )
+    #set_threads_num()
 
     print(f"Start of worker with gpu = {gpu}")
     args.gpu = gpu
