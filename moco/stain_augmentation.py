@@ -542,14 +542,14 @@ class StainAugmentor(nn.Module):
 def Robin_version():
     stain_matrix_mins: Tuple[float, float] = ((0.4, 0.3), (0.5, 0.5), (0.3, 0.3)),
     stain_matrix_maxs: Tuple[float, float] = ((0.7, 0.5), (1, 1), (0.7, 0.7))
-    return StainAugmentor(od_mins=(0, 0), od_maxs=(3, 3), stain_matrix_mins=stain_matrix_mins,
+    return StainAugmentor(od_mins=(0.5, 0.3), od_maxs=(2, 2), stain_matrix_mins=stain_matrix_mins,
                           stain_matrix_maxs=stain_matrix_maxs, color_system="rgb")
 
 
 def realistic_version():
     stain_matrix_mins: Tuple[float, float] = ((0.75, 0.80), (0.15, 0.2), (0.4, 0.6)),
     stain_matrix_maxs: Tuple[float, float] = ((0.80, 1), (0.6, 0.7), (0.8, 0.9))
-    return StainAugmentor(od_mins=(0, 0), od_maxs=(3, 3), stain_matrix_mins=stain_matrix_mins,
+    return StainAugmentor(od_mins=(0.5, 0.3), od_maxs=(2, 2), stain_matrix_mins=stain_matrix_mins,
                           stain_matrix_maxs=stain_matrix_maxs, color_system="hsv")
 
 

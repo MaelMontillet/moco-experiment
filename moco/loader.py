@@ -92,15 +92,12 @@ class CustomTransform:
     """
     def __call__(self, batch): 
         
-
-        t = time()
         stained_batch1 = self.stain_augmentation(batch)
         stained_batch2 = self.stain_augmentation(batch)
 
         batch1 = []
         batch2 = []
 
-        t = time()
         for i in range(len(batch)):
             first_crop = self.base_transform1(stained_batch1[i])
             batch1.append(first_crop)

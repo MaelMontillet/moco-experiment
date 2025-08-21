@@ -138,8 +138,8 @@ parser.add_argument('--tar-dir', help="tar of the dataset, it will be mounted re
 parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 parser.add_argument('--cache', help="Cache directory for WebDataset")
-parser.add_argument('--num_tiles', help="Cache directory for WebDataset", type=int, default=3500000)
-
+parser.add_argument('--num_tiles', help="Cache directory for WebDataset", type=int, default=3700000)
+parser.add_argument('--version', help="Version of the stain augmentation: free or fealistic.", default="free")
 
 def set_threads_num():
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -150,7 +150,6 @@ def set_threads_num():
 import io
 import glob
 from PIL import Image
-
 
 def png_decoder(sample):
     # find the first key ending with ".png"
@@ -165,17 +164,27 @@ def is_png(sample):
     # keep only samples with at least one key ending in ".png"
     return any(k.endswith(".png") for k in sample.keys())
 
+def worker_init_fn(worker_id):
+    set_threads_num()
 
-def make_dataloader(args, buffer_size=1000):
-    """Create a DataLoader for training on the ImageNet dataset using WebDataset."""
-
+def make_dataloader(args, buffer_size=100000):
     to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
     tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
+    #Debugging setup:
+    files = []
+    table = pandas.read_csv("/p/scratch/mfmpm/mael/data/slide_table_tcga_brca.csv")
+    ref = [file.split(".")[0] for file in table["FILENAME"]]
+    for file in tar_files:
+        if os.path.basename(file).split(".")[0] in ref:
+            files.append(file)
+    print(len(files))
+    tar_files = files
+
     train_dataset = wds.WebDataset(
         tar_files, 
         resampled=True,
-        shardshuffle=True,
+        shardshuffle=False,
         cache_dir=args.cache,
         nodesplitter=wds.split_by_node
     )
@@ -188,10 +197,11 @@ def make_dataloader(args, buffer_size=1000):
     )
 
     # For IterableDataset objects, the batching needs to happen in the dataset.
-    trainset = trainset.batched(args.batch_size)
+    train_dataset = train_dataset.batched(args.batch_size)
     trainloader = wds.WebLoader(
-        trainset, batch_size=None, pin_memory=True, 
-        num_workers=args.workers//args.world_size, persistent_workers=True,
+        train_dataset, batch_size=None, pin_memory=True, 
+        num_workers=args.workers//args.world_size, 
+        persistent_workers=True,
         #worker_init_fn=worker_init_fn, 
         #multiprocessing_context=mp.get_context('spawn')
         )
@@ -200,19 +210,23 @@ def make_dataloader(args, buffer_size=1000):
     trainloader = trainloader.unbatched().shuffle(buffer_size).batched(args.batch_size)
 
     # A resampled dataset is infinite size, but we can recreate a fixed epoch length.
-    trainloader = trainloader.with_epoch(args.num_tiles // args.batch_size)
+    trainloader = trainloader.with_epoch(args.num_tiles // (args.batch_size * args.world_size))
 
     return trainloader
 
+#debug
+import pandas
 
 def main():
-    
     #set_threads_num()
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
     os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
 
     print("Parsing arguments")
     args = parser.parse_args()
+
+    if args.version != "free" and args.version != "realistic":
+        raise ValueError()
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -394,8 +408,11 @@ def main_worker(gpu, ngpus_per_node, args):
         normalize
     ]
 
+    if args.version == "free":
+        stain_augmentor = stain_augmentation.all_free_version()
+    elif args.version == "realistic":
+        stain_augmentor = stain_augùentation.realistic_version()
 
-    stain_augmentor = stain_augmentation.all_free_version()
     my_transform = moco.loader.CustomTransform(v2.Compose(augmentation1), 
                                                v2.Compose(augmentation2), 
                                                stain_augmentor)
@@ -430,7 +447,7 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
     learning_rates = AverageMeter('LR', ':.4e')
     losses = AverageMeter('Loss', ':.4e')
     progress = ProgressMeter(
-        len(train_loader),
+        args.num_tiles // args.batch_size,
         [batch_time, data_time, learning_rates, losses],
         prefix="Epoch: [{}]".format(epoch))
 
@@ -438,11 +455,11 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
     model.train()
 
     end = time.time()
-    iters_per_epoch = len(train_loader)
+    iters_per_epoch = args.num_tiles // args.batch_size
     moco_m = args.moco_m
     print("Just before loading")
     for i, batch in enumerate(train_loader):
-
+        batch = batch[0]
         if args.gpu is not None:
             batch = batch.cuda(args.gpu, non_blocking=True)
 
