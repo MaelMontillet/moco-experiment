@@ -1,55 +1,34 @@
 #!/usr/bin/env python
 
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
-
 import os
-
-#os.environ["OMP_NUM_THREADS"] = "1"
-#os.environ["MKL_NUM_THREADS"] = "1"
-
 import torch
-#torch.set_num_threads(1)
-torch.multiprocessing.set_start_method('spawn', force=True)
-
 import argparse
-import builtins
 import math
-import random
 import shutil
 import time
-import warnings
 from functools import partial
 
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-import torch.distributed as dist
 import torch.optim
-import torch.multiprocessing as mp
 import torch.utils.data
 import torch.utils.data.distributed
-import torchvision.datasets as datasets
 import torchvision.models as torchvision_models
 from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data import DataLoader
-
 
 import moco.builder
 import moco.loader
 import moco.optimizer
 from moco import stain_augmentation
-
 import vits
-
-
 from torchvision.transforms import v2
 import webdataset as wds
-
+import io
+import glob
+from PIL import Image
+import functools
+import pandas
 
 
 torchvision_model_names = sorted(name for name in torchvision_models.__dict__
@@ -58,13 +37,13 @@ torchvision_model_names = sorted(name for name in torchvision_models.__dict__
 
 model_names = ['vit_small', 'vit_base', 'vit_conv_small', 'vit_conv_base'] + torchvision_model_names
 
-parser = argparse.ArgumentParser(description='MoCo ImageNet Pre-Training')
+parser = argparse.ArgumentParser(description='MoCo Pathology specific data augmentation Pre-Training')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
                         ' | '.join(model_names) +
                         ' (default: resnet50)')
-parser.add_argument('-j', '--workers', default=32, type=int, metavar='N',
+parser.add_argument('-j', '--workers', default=48, type=int, metavar='N',
                     help='number of data loading workers (default: 32)')
 parser.add_argument('--epochs', default=100, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -90,19 +69,8 @@ parser.add_argument('--world-size', default=-1, type=int,
                     help='number of nodes for distributed training')
 parser.add_argument('--rank', default=-1, type=int,
                     help='node rank for distributed training')
-parser.add_argument('--dist-url', default='file://shared_file', type=str,
+parser.add_argument('--dist-url', default='env://', type=str,
                     help='url used to set up distributed training')
-parser.add_argument('--dist-backend', default='nccl', type=str,
-                    help='distributed backend')
-parser.add_argument('--seed', default=None, type=int,
-                    help='seed for initializing training. ')
-parser.add_argument('--gpu', default=None, type=int,
-                    help='GPU id to use.')
-parser.add_argument('--multiprocessing-distributed', action='store_true',
-                    help='Use multi-processing distributed training to launch '
-                         'N processes per node, which has N GPUs. This is the '
-                         'fastest way to use PyTorch for either single node or '
-                         'multi node data parallel training')
 
 # moco specific configs:
 parser.add_argument('--moco-dim', default=256, type=int,
@@ -131,23 +99,14 @@ parser.add_argument('--crop-min', default=0.08, type=float,
                     help='minimum scale for random cropping (default: 0.08)')
 
 
-# add with th fork
+# add with the fork
 parser.add_argument('--tar-dir', help="tar of the dataset, it will be mounted recursively")
-parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
+parser.add_argument('--num-gpu', help="Total number of GPUs", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 parser.add_argument('--cache', help="Cache directory for WebDataset")
 parser.add_argument('--num-tiles', help="Cache directory for WebDataset", type=int, default=1000000)
 parser.add_argument('--version', help="Version of the stain augmentation: free or realistic.", default="free")
 
-def set_threads_num():
-    os.environ["OMP_NUM_THREADS"] = "1"
-    os.environ["MKL_NUM_THREADS"] = "1"
-    torch.set_num_threads(1)
-
-
-import io
-import glob
-from PIL import Image
 
 def png_decoder(sample):
     # find the first key ending with ".png"
@@ -162,9 +121,6 @@ def is_png(sample):
     # keep only samples with at least one key ending in ".png"
     return any(k.endswith(".png") for k in sample.keys())
 
-def worker_init_fn(worker_id):
-    set_threads_num()
-
 def make_dataloader(args, buffer_size=10000):
     to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
@@ -176,7 +132,7 @@ def make_dataloader(args, buffer_size=10000):
     for file in tar_files:
         if os.path.basename(file).split(".")[0] in ref:
             files.append(file)
-    print(len(files))
+    print0(f"Number of slides: {len(files)}")
     tar_files = files
 
     train_dataset = wds.WebDataset(
@@ -198,11 +154,9 @@ def make_dataloader(args, buffer_size=10000):
     train_dataset = train_dataset.batched(args.batch_size)
     trainloader = wds.WebLoader(
         train_dataset, batch_size=None, 
-        #pin_memory=True, 
+        pin_memory=True, 
         num_workers=args.workers//args.world_size, 
-        #persistent_workers=True,
-        #worker_init_fn=worker_init_fn, 
-        #multiprocessing_context=mp.get_context('spawn')
+        persistent_workers=True
         )
 
     # We unbatch, shuffle, and rebatch to mix samples from different workers.
@@ -213,93 +167,42 @@ def make_dataloader(args, buffer_size=10000):
 
     return trainloader
 
-#debug
-import pandas
+@functools.lru_cache(maxsize=None)
+def is_root_process():
+    """Return whether this process is the root process."""
+    return torch.distributed.get_rank() == 0
+
+@functools.lru_cache(maxsize=None)
+def get_local_rank():
+    """Return the local rank of this process."""
+    return int(os.getenv('LOCAL_RANK'))
+
+
+def print0(*args, **kwargs):
+    """Print something only on the root process."""
+    if is_root_process():
+        print(*args, **kwargs)
+
 
 def main():
-    #set_threads_num()
+    args = parser.parse_args()
+
+    torch.distributed.init_process_group(backend='cpu:gloo,cuda:nccl')
+    # Get and set device.
+    if not torch.cuda.is_available():
+        raise ValueError("Cuda anavailable.")
+    local_rank = get_local_rank()
+    device = torch.device('cuda', local_rank)
+    torch.cuda.set_device(device)
+
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
     os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
 
-    print("Parsing arguments")
-    args = parser.parse_args()
-
     if args.version != "free" and args.version != "realistic" and args.version != "none":
-        raise ValueError()
-
-    if args.seed is not None:
-        random.seed(args.seed)
-        torch.manual_seed(args.seed)
-        cudnn.deterministic = True
-        warnings.warn('You have chosen to seed training. '
-                      'This will turn on the CUDNN deterministic setting, '
-                      'which can slow down your training considerably! '
-                      'You may see unexpected behavior when restarting '
-                      'from checkpoints.')
-
-    if args.gpu is not None:
-        warnings.warn('You have chosen a specific GPU. This will completely '
-                      'disable data parallelism.')
-
-    if args.dist_url == "env://" and args.world_size == -1:
-        args.world_size = int(os.environ["WORLD_SIZE"])
-
-    args.distributed = args.world_size > 1 or args.multiprocessing_distributed
-    
-    print("url :", args.dist_url)
-    # Mount dataset
-
-
-    ngpus_per_node = args.num_gpu
-    print(f"Using {args.num_gpu} among {torch.cuda.device_count()} GPU detected.")
-
-    if args.multiprocessing_distributed:
-        # Since we have ngpus_per_node processes per node, the total world_size
-        # needs to be adjusted accordingly
-        args.world_size = ngpus_per_node * args.world_size
-        # Use torch.multiprocessing.spawn to launch distributed processes: the
-        # main_worker process function
-        print("Lauching workers.")
-        mp.spawn(main_worker, nprocs=ngpus_per_node, args=(ngpus_per_node, args))
-    else:
-        # Simply call main_worker function
-        main_worker(args.gpu, ngpus_per_node, args)
-
-"""def worker_init_fn(worker_id):
-    set_threads_num()"""
+        raise ValueError()                    
         
-
-def main_worker(gpu, ngpus_per_node, args):
-
-    #set_threads_num()
-
-    print(f"Start of worker with gpu = {gpu}")
-    args.gpu = gpu
-
-    # suppress printing if not first GPU on each node
-    if args.multiprocessing_distributed and (args.gpu != 0 or args.rank != 0):
-        print(f"Supress printing for gpu {gpu}")
-        def print_pass(*args):
-            pass
-        builtins.print = print_pass
-
-    if args.distributed:
-        if args.dist_url == "env://" and args.rank == -1:
-            args.rank = int(os.environ["RANK"])
-        if args.multiprocessing_distributed:
-            # For multiprocessing distributed training, rank needs to be the
-            # global rank among all the processes
-            args.rank = args.rank * ngpus_per_node + gpu
-        print(f"Init group process (gpu = {gpu}, rank = {args.rank})")
-        dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
-                                world_size=args.world_size, rank=args.rank, 
-                                #device_id=torch.device(f"cuda:{args.gpu}")
-                                )
-        print("Barrier: Waiting for all processes to reach the same point.")
-        torch.distributed.barrier()
-        print("All processes reached the barrier.")
     # create model
-    print("=> creating model '{}'".format(args.arch))
+    print0("=> creating model '{}'".format(args.arch))
     if args.arch.startswith('vit'):
         model = moco.builder.MoCo_ViT(
             partial(vits.__dict__[args.arch], stop_grad_conv1=args.stop_grad_conv1),
@@ -312,38 +215,17 @@ def main_worker(gpu, ngpus_per_node, args):
     # infer learning rate before changing batch size
     args.lr = args.lr * args.batch_size / 256 
     
-    if not torch.cuda.is_available():
-        print('using CPU, this will be slow')
-    elif args.distributed:
-        # apply SyncBN
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        # For multiprocessing distributed, DistributedDataParallel constructor
-        # should always set the single device scope, otherwise,
-        # DistributedDataParallel will use all available devices.
-        if args.gpu is not None:
-            torch.cuda.set_device(args.gpu)
-            model.cuda(args.gpu)
-            # When using a single GPU per process and per
-            # DistributedDataParallel, we need to divide the batch size
-            # ourselves based on the total number of GPUs we have
-            args.batch_size = int(args.batch_size / args.world_size)
-            args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
-            model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-        else:
-            model.cuda()
-            # DistributedDataParallel will divide and allocate batch_size to all
-            # available GPUs if device_ids are not set
-            model = torch.nn.parallel.DistributedDataParallel(model)
-    elif args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
-        model = model.cuda(args.gpu)
-        # comment out the following line for debugging
-        raise NotImplementedError("Only DistributedDataParallel is supported.")
-    else:
-        # AllGather/rank implementation in this code only supports DistributedDataParallel.
-        raise NotImplementedError("Only DistributedDataParallel is supported.")
-    #print(model) # print model after SyncBatchNorm
-    print("Model created.")
+    # apply SyncBN
+    model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+    # For multiprocessing distributed, DistributedDataParallel constructor
+    # should always set the single device scope, otherwise,
+    # DistributedDataParallel will use all available devices.
+    model.cuda(local_rank)
+    # When using a single GPU per process and per
+    # DistributedDataParallel, we need to divide the batch size
+    # ourselves based on the total number of GPUs we have
+    args.batch_size = int(args.batch_size / args.num_gpu)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
     if args.optimizer == 'lars':
         optimizer = moco.optimizer.LARS(model.parameters(), args.lr,
@@ -354,18 +236,15 @@ def main_worker(gpu, ngpus_per_node, args):
                                 weight_decay=args.weight_decay)
         
     scaler = torch.amp.GradScaler("cuda")
-    summary_writer = SummaryWriter() if args.rank == 0 else None
+    summary_writer = SummaryWriter() if is_root_process() else None
 
     # optionally resume from a checkpoint
     if args.resume:
         if os.path.isfile(args.resume):
-            print("=> loading checkpoint '{}'".format(args.resume))
-            if args.gpu is None:
-                checkpoint = torch.load(args.resume)
-            else:
-                # Map model to be loaded to specified single gpu.
-                loc = 'cuda:{}'.format(args.gpu)
-                checkpoint = torch.load(args.resume, map_location=loc)
+            print0("=> loading checkpoint '{}'".format(args.resume))
+            # Map model to be loaded to specified single gpu.
+            loc = 'cuda:{}'.format(local_rank)
+            checkpoint = torch.load(args.resume, map_location=loc)
             args.start_epoch = checkpoint['epoch']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -373,13 +252,12 @@ def main_worker(gpu, ngpus_per_node, args):
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
         else:
-            print("=> no checkpoint found at '{}'".format(args.resume))
+            print0("=> no checkpoint found at '{}'".format(args.resume))
 
     cudnn.benchmark = True
 
     # Data loading code
-    normalize = v2.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    normalize = v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     # follow BYOL's augmentation recipe: https://arxiv.org/abs/2006.07733
     augmentation1 = [
@@ -408,18 +286,17 @@ def main_worker(gpu, ngpus_per_node, args):
     if args.version == "free":
         stain_augmentor = stain_augmentation.all_free_version()
     elif args.version == "realistic":
-        stain_augmentor = stain_augùentation.realistic_version()
+        stain_augmentor = stain_augmentation.realistic_version()
     else:
         stain_augmentor = lambda x : x
 
     my_transform = moco.loader.CustomTransform(v2.Compose(augmentation1), 
                                                v2.Compose(augmentation2), 
                                                stain_augmentor)
-    num_workers = 1
     
-    print("Creating Dataset / DataLoader")
+    print0("Creating Dataset / DataLoader")
     train_loader = make_dataloader(args)
-    print("Starting training")
+    print0("Starting training")
 
 
     for epoch in range(args.start_epoch, args.epochs):
@@ -441,7 +318,6 @@ def main_worker(gpu, ngpus_per_node, args):
         summary_writer.close()
 
 def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, transform):
-    print("In train function")
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     learning_rates = AverageMeter('LR', ':.4e')
@@ -457,12 +333,9 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
     end = time.time()
     iters_per_epoch = args.num_tiles // args.batch_size
     moco_m = args.moco_m
-    print("Just before loading")
     for i, batch in enumerate(train_loader):
-        batch = batch[0]
-        if args.gpu is not None:
-            batch = batch.cuda(args.gpu, non_blocking=True)
-
+        #batch = batch[0]
+        batch = batch.cuda(get_local_rank(), non_blocking=True)
         images = transform(batch)
 
         # measure data loading time
@@ -535,7 +408,7 @@ class ProgressMeter(object):
     def display(self, batch):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        print('\t'.join(entries))
+        print0('\t'.join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))
