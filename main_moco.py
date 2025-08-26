@@ -14,7 +14,7 @@ import os
 
 import torch
 #torch.set_num_threads(1)
-#torch.multiprocessing.set_start_method('spawn', force=True)
+torch.multiprocessing.set_start_method('spawn', force=True)
 
 import argparse
 import builtins
@@ -59,8 +59,6 @@ torchvision_model_names = sorted(name for name in torchvision_models.__dict__
 model_names = ['vit_small', 'vit_base', 'vit_conv_small', 'vit_conv_base'] + torchvision_model_names
 
 parser = argparse.ArgumentParser(description='MoCo ImageNet Pre-Training')
-parser.add_argument('data', metavar='DIR',
-                    help='path to dataset')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50',
                     choices=model_names,
                     help='model architecture: ' +
@@ -138,8 +136,8 @@ parser.add_argument('--tar-dir', help="tar of the dataset, it will be mounted re
 parser.add_argument('--num-gpu', help="Number of GPU to use (gpu ids used will be from 0 to num_gpu-1)", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 parser.add_argument('--cache', help="Cache directory for WebDataset")
-parser.add_argument('--num_tiles', help="Cache directory for WebDataset", type=int, default=3700000)
-parser.add_argument('--version', help="Version of the stain augmentation: free or fealistic.", default="free")
+parser.add_argument('--num-tiles', help="Cache directory for WebDataset", type=int, default=1000000)
+parser.add_argument('--version', help="Version of the stain augmentation: free or realistic.", default="free")
 
 def set_threads_num():
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -167,7 +165,7 @@ def is_png(sample):
 def worker_init_fn(worker_id):
     set_threads_num()
 
-def make_dataloader(args, buffer_size=100000):
+def make_dataloader(args, buffer_size=10000):
     to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 
     tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
@@ -199,9 +197,10 @@ def make_dataloader(args, buffer_size=100000):
     # For IterableDataset objects, the batching needs to happen in the dataset.
     train_dataset = train_dataset.batched(args.batch_size)
     trainloader = wds.WebLoader(
-        train_dataset, batch_size=None, pin_memory=True, 
+        train_dataset, batch_size=None, 
+        #pin_memory=True, 
         num_workers=args.workers//args.world_size, 
-        persistent_workers=True,
+        #persistent_workers=True,
         #worker_init_fn=worker_init_fn, 
         #multiprocessing_context=mp.get_context('spawn')
         )
@@ -225,7 +224,7 @@ def main():
     print("Parsing arguments")
     args = parser.parse_args()
 
-    if args.version != "free" and args.version != "realistic":
+    if args.version != "free" and args.version != "realistic" and args.version != "none":
         raise ValueError()
 
     if args.seed is not None:
@@ -250,8 +249,6 @@ def main():
     print("url :", args.dist_url)
     # Mount dataset
 
-    # Create target dir
-    os.makedirs(args.data, exist_ok=True)
 
     ngpus_per_node = args.num_gpu
     print(f"Using {args.num_gpu} among {torch.cuda.device_count()} GPU detected.")
@@ -296,7 +293,7 @@ def main_worker(gpu, ngpus_per_node, args):
         print(f"Init group process (gpu = {gpu}, rank = {args.rank})")
         dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
                                 world_size=args.world_size, rank=args.rank, 
-                                device_id=torch.device(f"cuda:{args.gpu}")
+                                #device_id=torch.device(f"cuda:{args.gpu}")
                                 )
         print("Barrier: Waiting for all processes to reach the same point.")
         torch.distributed.barrier()
@@ -412,6 +409,8 @@ def main_worker(gpu, ngpus_per_node, args):
         stain_augmentor = stain_augmentation.all_free_version()
     elif args.version == "realistic":
         stain_augmentor = stain_augùentation.realistic_version()
+    else:
+        stain_augmentor = lambda x : x
 
     my_transform = moco.loader.CustomTransform(v2.Compose(augmentation1), 
                                                v2.Compose(augmentation2), 
@@ -421,6 +420,7 @@ def main_worker(gpu, ngpus_per_node, args):
     print("Creating Dataset / DataLoader")
     train_loader = make_dataloader(args)
     print("Starting training")
+
 
     for epoch in range(args.start_epoch, args.epochs):
 
@@ -447,7 +447,7 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
     learning_rates = AverageMeter('LR', ':.4e')
     losses = AverageMeter('Loss', ':.4e')
     progress = ProgressMeter(
-        args.num_tiles // args.batch_size,
+        args.num_tiles // (args.batch_size * args.world_size),
         [batch_time, data_time, learning_rates, losses],
         prefix="Epoch: [{}]".format(epoch))
 
