@@ -1,0 +1,7 @@
+torch>=1.9,<3
+torchrun_jsc>=0.0.15
+torchvision>=0.13
+timm
+webdataset
+ratarmount
+tensorboard

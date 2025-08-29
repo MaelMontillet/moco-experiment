@@ -1,0 +1,207 @@
+preprocessing:
+  #output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/F/TCGA"
+  #wsi_dir: "/p/scratch/mfmpm/tim/data/TCGA/WSIs/TCGA-BRCA-DX-IMGS/data-BRCA"
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/F/CPTAC"
+  wsi_dir: "/p/scratch/mfmpm/tim/data/CPTAC/WSIs/CPTAC-BRCA/data"
+  extractor: "moco"
+
+  # Device to run feature extraction on ("cpu", "cuda", "cuda:0", etc.)
+  device: "cuda"
+
+  # Optional settings:
+
+  # Having a cache dir will speed up extracting features multiple times,
+  # e.g. with different feature extractors.  Optional.
+  cache_dir: "/tmp/mael/cache_feats/FCPTAC"
+  checkpoint_path: "/p/scratch/mfmpm/montillet/data/ckptF/checkpoint_0029.pth.tar"
+  arch: "vit_base"
+
+  # The extension of the tiles to cache. Use "png" for lossless compression,
+  # or "jpg" for lossy compression (requires around x100 less memory, 
+  # but you may encounter reproducibility issues in subsequent runs).
+  #cache_tiles_ext: "jpg"
+
+  # Tiler parameters.  The defaults work well for most domains and feature extractors.
+  #tile_size_um: 256.0
+  #tile_size_px: 224
+
+  # How many workers to use for tile extraction.  Should be less or equal to
+  # the number of cores of your system.
+  max_workers: 48
+
+  # Tiles with an average brightness of more than this value will be excluded
+  # from feature extraction.
+  #brightness_cutoff: 240
+
+  # Add a hash of the entire preprocessing codebase in the feature folder name.
+  # Used to distinguish features extracted with different code versions.
+  generate_hash: True
+
+  # A list (.txt, .xlsx or .csv) specifying filenames to preprocess 
+  # instead of processing all data in the directory.
+  #slide_list: "list.csv"
+
+
+training:
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/train2"
+
+  # An excel (.xlsx) or CSV (.csv) table containing the clinical information of
+  # patients.  Patients not present in this file will be ignored during training.
+  # Has to contain at least two columns,
+  # one titled with the value of `patient_label` (as defined below)
+  # containing a unique ID for each patient,
+  # and one with the value of `ground_truth_label` (also defined below),
+  # containing the ground truth corresponding to that patient.
+  clini_table: "/p/scratch/mfmpm/montillet/data/tables/clini/tcga_brca.csv"
+
+  # Directory the extracted features are saved in.
+  feature_dir: "/p/scratch/mfmpm/montillet/data/CPTAC-features/moco-6d9d48ff/data-BRCA"
+
+  # A table (.xlsx or .csv) relating every patient to their feature files.
+  # The table must contain at least two columns,
+  # one titled with the value of `patient_label` (as defined below),
+  # containing the patient ID (matching those in the `clini_table`),
+  # and one titled according to `filename_label` (also defined below)
+  # containing the feature file path relative to `feature_dir`.
+  # Patient IDs not present in the clini table
+  # as well as non-existent feature paths
+  # are ignored. NOTE: Don't forget to add the .h5 file extension.
+  slide_table: /p/scratch/mfmpm/montillet/data/tables/slides/slide_table_tcga_brca.csv
+
+  # Name of the column from the clini table to train on.
+  ground_truth_label: "PGR"
+
+  # Optional settings:
+
+  # The categories occurring in the target label column of the clini table.
+  # If unspecified, they will be inferred from the table itself.
+  categories: ["positive", "negative"]
+
+  # Path to a YAML file with advanced training parameters.
+  #params_path: "path/to/model_params.yaml"
+
+  # Experimental features:
+
+  # Change the precision of features during training
+  #use_vary_precision_transform: true
+
+
+deployment:
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/deploy2"
+
+  # An excel (.xlsx) or CSV (.csv) table containing the clinical information of
+  # patients.  Patients not present in this file will be ignored during training.
+  # Has to contain at least two columns, one titled "PATIENT", containing a patient ID,
+  # and a second column containing the categorical ground truths for that patient.
+  clini_table: "/p/scratch/mfmpm/montillet/data/tables/clini/cptac_brca.csv"
+
+  # Directory the extracted features are saved in.
+  feature_dir: "/p/scratch/mfmpm/montillet/data/CPTAC-features/moco-6d9d48ff/data"
+
+  # A table (.xlsx or .csv) relating every patient to their feature files.
+  # The table must contain at least two columns, one titled "PATIENT",
+  # containing the patient ID (matching those in the `clini_table`), and one
+  # called "FILENAME", containing the feature file path relative to `feature_dir`.
+  # Patient IDs not present in the clini table as well as non-existent feature
+  # paths are ignored. NOTE: Don't forget to add the .h5 file extension.
+  slide_table: "/p/scratch/mfmpm/montillet/data/tables/slides/slide_table_cptac_brca.csv"
+
+  # Name of the column from the clini to compare predictions to.
+  ground_truth_label: "PGR"
+
+  patient_label: "PATIENT"
+  filename_label: "FILENAME"
+
+  # Path of the trained model to deploy.
+  checkpoint_paths:
+  - "/p/scratch/mfmpm/montillet/data/stamp_results/train2/model.ckpt"
+  # You can also combine multiple models to get a majority vote from multiple models.
+  # This is especially handy to e.g. combine the models from a cross-validation.
+  #- "/path/to/model2.ckpt"
+  #- "/path/to/model3.ckpt"
+
+
+statistics:
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/statistics2"
+
+  # Name of the target label.
+  ground_truth_label: "PGR"
+
+  # A lot of the statistics are computed "one-vs-all", i.e. there needs to be
+  # a positive class to calculate the statistics for.
+  true_class: "positive"
+
+  # The patient predictions to generate the statistics from.
+  # For a single deployment, it could look like this:
+  pred_csvs:
+  - "/p/scratch/mfmpm/montillet/data/stamp_results/deploy2/patient-preds.csv"
+
+  # For a cross-validation with five folds, it could look like this:
+  #pred_csvs:
+  #- "/path/to/split-0/patient-preds.csv"
+  #- "/path/to/split-1/patient-preds.csv"
+  #- "/path/to/split-2/patient-preds.csv"
+  #- "/path/to/split-3/patient-preds.csv"
+  #- "/path/to/split-4/patient-preds.csv"
+
+
+heatmaps:
+  output_dir: "/path/to/save/files/to"
+
+  # Directory the extracted features are saved in.
+  feature_dir: "/path/your/extracted/features/are/stored/in"
+
+  wsi_dir: "/path/containing/whole/slide/images/to/extract/features/from"
+
+  # Path of the model to generate the heatmaps with.
+  checkpoint_path: "/path/to/model.ckpt"
+
+  # Overlay plot opacity. A value of 0 means transparent and 1 opaque.
+  #opacity = 0.6
+
+  # Slides to generate the heatmaps for.
+  # The slide paths have to be specified relative to `wsi_dir`.
+  # If not specified, stamp will generate heatmaps for all slides in `wsi_dir`.
+  #slide_paths:
+  #- slide1.svs
+  #- slide2.mrxs
+  
+
+  # The number of top- and bottom-scoring tiles to extract
+  #topk: 5
+  #bottomk: 5
+
+
+advanced_config:
+  max_epochs: 32
+  patience: 16
+  batch_size: 64
+  # Only for tile-level training. Reducing its amount could affect
+  # model performance. Reduces memory consumption. Default value works
+  # fine for most cases.
+  bag_size: 512
+  #num_workers: 16 # Default chosen by cpu cores
+  # One Cycle Learning Rate Scheduler parameters. Check docs for more info.
+  # Determines the initial learning rate via initial_lr = max_lr/div_factor
+  max_lr: 1e-4
+  div_factor: 25. 
+  # Select a model. Not working yet, added for future support.
+  # Now it uses a ViT for tile features and a MLP for patient features.
+  #model_name: "vit"
+
+  model_params:
+    # Tile-level training models:
+    vit: # Vision Transformer
+      dim_model: 512
+      dim_feedforward: 512
+      n_heads: 8
+      n_layers: 2
+      dropout: 0.25
+      # Experimental feature: Use ALiBi positional embedding
+      use_alibi: false
+
+    # Patient-level training models:
+    mlp: # Multilayer Perceptron
+      dim_hidden: 512
+      num_layers: 2
+      dropout: 0.25

@@ -65,10 +65,6 @@ parser.add_argument('-p', '--print-freq', default=10, type=int,
                     metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', default='', type=str, metavar='PATH',
                     help='path to latest checkpoint (default: none)')
-parser.add_argument('--world-size', default=-1, type=int,
-                    help='number of nodes for distributed training')
-parser.add_argument('--rank', default=-1, type=int,
-                    help='node rank for distributed training')
 parser.add_argument('--dist-url', default='env://', type=str,
                     help='url used to set up distributed training')
 
@@ -101,7 +97,6 @@ parser.add_argument('--crop-min', default=0.08, type=float,
 
 # add with the fork
 parser.add_argument('--tar-dir', help="tar of the dataset, it will be mounted recursively")
-parser.add_argument('--num-gpu', help="Total number of GPUs", type=int)
 parser.add_argument('--output', help="path to the directory where the checkpoint will be stored", default="./")
 parser.add_argument('--cache', help="Cache directory for WebDataset")
 parser.add_argument('--num-tiles', help="Cache directory for WebDataset", type=int, default=1000000)
@@ -155,7 +150,7 @@ def make_dataloader(args, buffer_size=10000):
     trainloader = wds.WebLoader(
         train_dataset, batch_size=None, 
         pin_memory=True, 
-        num_workers=args.workers//args.world_size, 
+        num_workers=args.workers//get_world_size() - 1, 
         persistent_workers=True
         )
 
@@ -163,7 +158,7 @@ def make_dataloader(args, buffer_size=10000):
     trainloader = trainloader.unbatched().shuffle(buffer_size).batched(args.batch_size)
 
     # A resampled dataset is infinite size, but we can recreate a fixed epoch length.
-    trainloader = trainloader.with_epoch(args.num_tiles // (args.batch_size * args.world_size))
+    trainloader = trainloader.with_epoch(args.num_tiles // (args.batch_size * get_world_size()))
 
     return trainloader
 
@@ -176,6 +171,11 @@ def is_root_process():
 def get_local_rank():
     """Return the local rank of this process."""
     return int(os.getenv('LOCAL_RANK'))
+
+@functools.lru_cache(maxsize=None)
+def get_world_size():
+    """Return the world size."""
+    return torch.distributed.get_world_size()
 
 
 def print0(*args, **kwargs):
@@ -224,7 +224,7 @@ def main():
     # When using a single GPU per process and per
     # DistributedDataParallel, we need to divide the batch size
     # ourselves based on the total number of GPUs we have
-    args.batch_size = int(args.batch_size / args.num_gpu)
+    args.batch_size = int(args.batch_size / get_world_size())
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank])
 
     if args.optimizer == 'lars':
@@ -304,8 +304,7 @@ def main():
         # train for one epoch
         train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, transform=my_transform)
 
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed
-                and args.rank == 0): # only the first GPU saves checkpoint
+        if is_root_process(): # only the first GPU saves checkpoint
             save_checkpoint({
                 'epoch': epoch + 1,
                 'arch': args.arch,
@@ -314,7 +313,7 @@ def main():
                 'scaler': scaler.state_dict(),
             }, is_best=False, filename=os.path.join(args.output, 'checkpoint_%04d.pth.tar' % epoch))
     
-    if args.rank == 0:
+    if is_root_process():
         summary_writer.close()
 
 def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, transform):
@@ -323,7 +322,7 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
     learning_rates = AverageMeter('LR', ':.4e')
     losses = AverageMeter('Loss', ':.4e')
     progress = ProgressMeter(
-        args.num_tiles // (args.batch_size * args.world_size),
+        args.num_tiles // (args.batch_size * get_world_size()),
         [batch_time, data_time, learning_rates, losses],
         prefix="Epoch: [{}]".format(epoch))
 
@@ -334,7 +333,7 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
     iters_per_epoch = args.num_tiles // args.batch_size
     moco_m = args.moco_m
     for i, batch in enumerate(train_loader):
-        #batch = batch[0]
+        batch = batch[0]
         batch = batch.cuda(get_local_rank(), non_blocking=True)
         images = transform(batch)
 
@@ -352,7 +351,7 @@ def train(train_loader, model, optimizer, scaler, summary_writer, epoch, args, t
             loss = model(images[0], images[1], moco_m)
 
         losses.update(loss.item(), images[0].size(0))
-        if args.rank == 0:
+        if is_root_process():
             summary_writer.add_scalar(f"loss", loss.item(), epoch * iters_per_epoch + i)
 
         # compute gradient and do SGD step
