@@ -8,7 +8,7 @@
 #SBATCH --threads-per-core=2
 #SBATCH --gres=gpu:4
 #SBATCH --time=24:00:00
-#SBATCH --job-name preCPTACF
+#SBATCH --job-name preTCGA
 #SBATCH --mem 500G
 #SBATCH --output=/p/scratch/mfmpm/montillet/data/outs/preprocess_%j.out
 
@@ -39,6 +39,6 @@ module load GCC OpenMPI PyTorch torchvision
 
 source /p/scratch/mfmpm/montillet/code/STAMP/.venv/bin/activate
 
-stamp --config /p/scratch/mfmpm/montillet/code/eval/config.yaml preprocess
-#stamp --config /p/scratch/mfmpm/montillet/code/eval/config.yaml train
-#stamp --config /p/scratch/mfmpm/montillet/code/eval/config.yaml deploy
+stamp --config config.yaml preprocess
+#stamp --config config.yaml train
+#stamp --config config.yaml deploy

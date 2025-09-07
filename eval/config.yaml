@@ -1,8 +1,8 @@
 preprocessing:
-  #output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/F/TCGA"
-  #wsi_dir: "/p/scratch/mfmpm/tim/data/TCGA/WSIs/TCGA-BRCA-DX-IMGS/data-BRCA"
-  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/F/CPTAC"
-  wsi_dir: "/p/scratch/mfmpm/tim/data/CPTAC/WSIs/CPTAC-BRCA/data"
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/TCGA"
+  wsi_dir: "/p/scratch/mfmpm/tim/data/TCGA/WSIs/TCGA-BRCA-DX-IMGS/data-BRCA"
+  #output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/CPTAC"
+  #wsi_dir: "/p/scratch/mfmpm/tim/data/CPTAC/WSIs/CPTAC-BRCA/data"
   extractor: "moco"
 
   # Device to run feature extraction on ("cpu", "cuda", "cuda:0", etc.)
@@ -12,8 +12,8 @@ preprocessing:
 
   # Having a cache dir will speed up extracting features multiple times,
   # e.g. with different feature extractors.  Optional.
-  cache_dir: "/tmp/mael/cache_feats/FCPTAC"
-  checkpoint_path: "/p/scratch/mfmpm/montillet/data/ckptF/checkpoint_0029.pth.tar"
+  cache_dir: "/tmp/montillet/TCGA"
+  checkpoint_path: /p/scratch/mfmpm/montillet/data/ckpt/checkpoint_0099.pth.tar
   arch: "vit_base"
 
   # The extension of the tiles to cache. Use "png" for lossless compression,
@@ -22,8 +22,8 @@ preprocessing:
   #cache_tiles_ext: "jpg"
 
   # Tiler parameters.  The defaults work well for most domains and feature extractors.
-  #tile_size_um: 256.0
-  #tile_size_px: 224
+  tile_size_um: 256.0
+  tile_size_px: 224
 
   # How many workers to use for tile extraction.  Should be less or equal to
   # the number of cores of your system.
@@ -43,7 +43,7 @@ preprocessing:
 
 
 training:
-  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/train2"
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/trainB"
 
   # An excel (.xlsx) or CSV (.csv) table containing the clinical information of
   # patients.  Patients not present in this file will be ignored during training.
@@ -55,7 +55,7 @@ training:
   clini_table: "/p/scratch/mfmpm/montillet/data/tables/clini/tcga_brca.csv"
 
   # Directory the extracted features are saved in.
-  feature_dir: "/p/scratch/mfmpm/montillet/data/CPTAC-features/moco-6d9d48ff/data-BRCA"
+  feature_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/TCGA/moco-6d9d48ff"
 
   # A table (.xlsx or .csv) relating every patient to their feature files.
   # The table must contain at least two columns,
@@ -66,7 +66,7 @@ training:
   # Patient IDs not present in the clini table
   # as well as non-existent feature paths
   # are ignored. NOTE: Don't forget to add the .h5 file extension.
-  slide_table: /p/scratch/mfmpm/montillet/data/tables/slides/slide_table_tcga_brca.csv
+  slide_table: "/p/scratch/mfmpm/montillet/data/tables/slides/slide_table_tcga_brca.csv"
 
   # Name of the column from the clini table to train on.
   ground_truth_label: "PGR"
@@ -87,7 +87,7 @@ training:
 
 
 deployment:
-  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/deploy2"
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/deployB"
 
   # An excel (.xlsx) or CSV (.csv) table containing the clinical information of
   # patients.  Patients not present in this file will be ignored during training.
@@ -96,7 +96,7 @@ deployment:
   clini_table: "/p/scratch/mfmpm/montillet/data/tables/clini/cptac_brca.csv"
 
   # Directory the extracted features are saved in.
-  feature_dir: "/p/scratch/mfmpm/montillet/data/CPTAC-features/moco-6d9d48ff/data"
+  feature_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/features/CPTAC/moco-6d9d48ff"
 
   # A table (.xlsx or .csv) relating every patient to their feature files.
   # The table must contain at least two columns, one titled "PATIENT",
@@ -114,7 +114,7 @@ deployment:
 
   # Path of the trained model to deploy.
   checkpoint_paths:
-  - "/p/scratch/mfmpm/montillet/data/stamp_results/train2/model.ckpt"
+  - "/p/scratch/mfmpm/montillet/data/stamp_results/trainB/model.ckpt"
   # You can also combine multiple models to get a majority vote from multiple models.
   # This is especially handy to e.g. combine the models from a cross-validation.
   #- "/path/to/model2.ckpt"
@@ -122,7 +122,7 @@ deployment:
 
 
 statistics:
-  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/statistics2"
+  output_dir: "/p/scratch/mfmpm/montillet/data/stamp_results/statisticsB"
 
   # Name of the target label.
   ground_truth_label: "PGR"
@@ -134,7 +134,7 @@ statistics:
   # The patient predictions to generate the statistics from.
   # For a single deployment, it could look like this:
   pred_csvs:
-  - "/p/scratch/mfmpm/montillet/data/stamp_results/deploy2/patient-preds.csv"
+  - "/p/scratch/mfmpm/montillet/data/stamp_results/deployB/patient-preds.csv"
 
   # For a cross-validation with five folds, it could look like this:
   #pred_csvs:

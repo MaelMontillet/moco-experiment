@@ -8,9 +8,9 @@
 #SBATCH --threads-per-core=1
 #SBATCH --gres=gpu:4
 #SBATCH --time=24:00:00
-#SBATCH --job-name ssl_mael
+#SBATCH --job-name ssl_Btry
 #SBATCH --mem 500G
-#SBATCH --output=/p/scratch/mfmpm/montillet/data/outs/ssl_%j.out
+#SBATCH --output=/p/scratch/mfmpm/montillet/data/outs/small_lrc_%j.out
 
 curr_file="$(scontrol show job "$SLURM_JOB_ID" | grep '^[[:space:]]*Command=' | head -n 1 | cut -d '=' -f 2-)"
 curr_dir="$(dirname "$curr_file")"
@@ -44,12 +44,12 @@ srun env -u CUDA_VISIBLE_DEVICES python -u -m torchrun_jsc \
        --rdzv_backend=c10d \
        /p/scratch/mfmpm/montillet/code/moco-v3/main_moco.py \
                 -a vit_base -b 1024 \
-                --optimizer=adamw --lr=1.5e-4 --weight-decay=.1 \
-                --epochs=100 --warmup-epochs=20 \
+                --optimizer=adamw --lr=1e-5 --weight-decay=.1 \
+                --epochs=100 --warmup-epochs=10 \
                 --stop-grad-conv1 --moco-m-cos --moco-t=.2 \
                 --dist-url 'env://' \
                 --tar-dir /p/scratch/mfmpm/tim/data/TCGA/cache \
-                --workers 48 --output /p/scratch/mfmpm/montillet/data/ckptF \
+                --workers 48 --output /p/scratch/mfmpm/montillet/data/ckptT \
                 --cache /p/scratch/mfmpm/cache-montillet \
-                --num-tiles 1000000 --version free \
-                #--resume /p/scratch/mfmpm/montillet/data/ckpt/checkpoint_0077.pth.tar
+                --num-tiles 1000000 --version none \
+                --resume /p/scratch/mfmpm/montillet/data/ckptT/checkpoint_0060.pth.tar
