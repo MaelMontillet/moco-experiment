@@ -10,7 +10,7 @@
 #SBATCH --time=24:00:00
 #SBATCH --job-name preTCGA
 #SBATCH --mem 500G
-#SBATCH --output=/p/scratch/mfmpm/montillet/data/outs/preprocess_%j.out
+#SBATCH --output=/p/scratch/mfmpm/montillet/data/outs/preTCGA_%j.out
 
 
 curr_file="$(scontrol show job "$SLURM_JOB_ID" | grep '^[[:space:]]*Command=' | head -n 1 | cut -d '=' -f 2-)"
@@ -39,6 +39,6 @@ module load GCC OpenMPI PyTorch torchvision
 
 source /p/scratch/mfmpm/montillet/code/STAMP/.venv/bin/activate
 
-stamp --config config.yaml preprocess
-#stamp --config config.yaml train
-#stamp --config config.yaml deploy
+stamp --config preTCGA.yaml preprocess
+
+rm -r /tmp/montillet/TCGA

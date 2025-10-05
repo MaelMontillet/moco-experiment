@@ -116,32 +116,20 @@ def is_png(sample):
     # keep only samples with at least one key ending in ".png"
     return any(k.endswith(".png") for k in sample.keys())
 
-def make_dataloader(args, buffer_size=10000):
+def make_dataloader(args, buffer_size=1000):
     to_tensor =  v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
-
-    tar_files = glob.glob(os.path.join(args.tar_dir, "*.tar"))
-    #Debugging setup:
-    files = []
-    table = pandas.read_csv("/p/scratch/mfmpm/mael/data/slide_table_tcga_brca.csv")
-    ref = [file.split(".")[0] for file in table["FILENAME"]]
-    for file in tar_files:
-        if os.path.basename(file).split(".")[0] in ref:
-            files.append(file)
-    print0(f"Number of slides: {len(files)}")
-    tar_files = files
+    tar_files = os.path.join(args.tar_dir, "shard-{00000..03040}.tar")
 
     train_dataset = wds.WebDataset(
         tar_files, 
         resampled=True,
-        shardshuffle=False,
+        shardshuffle=False, # Ignored when resampled = True
         cache_dir=args.cache,
         nodesplitter=wds.split_by_node
     )
     train_dataset = (
-        train_dataset.shuffle(buffer_size)
-        .select(is_png)      # skip JSON or other files
-        .map(png_decoder)    # decode and add 'png' key
-        .to_tuple("png")     # now safe to extract
+        train_dataset.decode("pil")                      # decode images into PIL Images
+        .to_tuple("jpg")         # return a tuple (key, image)
         .map_tuple(to_tensor)
     )
 
@@ -197,6 +185,7 @@ def main():
 
     os.environ['TORCH_KERNEL_CACHE_PATH'] = '/tmp/torch_kernel_cache'
     os.makedirs('/tmp/torch_kernel_cache', exist_ok=True)
+    os.makedirs(args.output, exist_ok=True)
 
     if args.version != "free" and args.version != "realistic" and args.version != "none":
         raise ValueError()                    
