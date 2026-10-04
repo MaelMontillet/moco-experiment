@@ -1,3 +1,17 @@
+# Presentation
+
+I did this project during my internship a Katherlab in parrallel with PRIMACODE project.
+The goal was to train two model with MoCov3 (self supervised learning) on whole TCGA:
+* One with pathology specific data augmentation (custom stain modifications of hematoxylin and eosin channel separatly).
+* One with classical data augmentation
+
+The goal is to compare both models to see if pathology specific data augmentations improve performence and robustness to center bias (model can identify center through its staining protocols - modern foundation models encode more information linked to technical bias then biology).
+
+The project was running on Julich supercomputing center (https://www.fz-juelich.de/en/jsc). I learned about slurm and HPC cluster thanks to this project.
+Performance weren't good because the tiles where taken in order so the negative pairs in Moco weren't true negative pairs.
+Next step would have been to shuffle the TCGA tiles but due to personal constraint, I didn't have time to continue the project after the internship and now I don't have access to the supercompting center anymore.
+
+# README of the forked MoCo v3
 ## MoCo v3 for Self-supervised ResNet and ViT
 
 ### Introduction
