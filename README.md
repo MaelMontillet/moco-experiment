@@ -2,7 +2,7 @@
 
 I did this project during my internship a Katherlab in parrallel with PRIMACODE project.
 The goal was to train two model with MoCov3 (self supervised learning) on whole TCGA:
-* One with pathology specific data augmentation (custom stain modifications of hematoxylin and eosin channel separatly).
+* One with pathology specific data augmentation (custom stain modifications of hematoxylin and eosin channel separatly - path : moco/stain_augmentation.py).
 * One with classical data augmentation
 
 The goal is to compare both models to see if pathology specific data augmentations improve performence and robustness to center bias (model can identify center through its staining protocols - modern foundation models encode more information linked to technical bias then biology).
